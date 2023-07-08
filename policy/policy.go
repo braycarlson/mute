@@ -32,10 +32,6 @@ type IPolicyConfigVistaVtbl struct {
 	SetEndpointVisibility uintptr
 }
 
-func (pcv *IPolicyConfigVista) VTable() *IPolicyConfigVistaVtbl {
-	return (*IPolicyConfigVistaVtbl)(unsafe.Pointer(pcv.RawVTable))
-}
-
 func (pcv *IPolicyConfigVista) SetDefaultEndpoint(identifier string, role wca.ERole) (err error) {
 	err = pcvSetDefaultEndpoint(pcv, identifier, role)
 	return
@@ -48,7 +44,9 @@ func pcvSetDefaultEndpoint(pcv *IPolicyConfigVista, identifier string, role wca.
 		return
 	}
 
-	hr, _, _ := syscall.Syscall(
+	var hresult uintptr
+
+	hresult, _, _ = syscall.Syscall(
 		pcv.VTable().SetDefaultEndpoint,
 		3,
 		uintptr(unsafe.Pointer(pcv)),
@@ -56,9 +54,13 @@ func pcvSetDefaultEndpoint(pcv *IPolicyConfigVista, identifier string, role wca.
 		uintptr(uint32(role)),
 	)
 
-	if hr != 0 {
-		err = ole.NewError(hr)
+	if hresult != 0 {
+		err = ole.NewError(hresult)
 	}
 
 	return
+}
+
+func (pcv *IPolicyConfigVista) VTable() *IPolicyConfigVistaVtbl {
+	return (*IPolicyConfigVistaVtbl)(unsafe.Pointer(pcv.RawVTable))
 }

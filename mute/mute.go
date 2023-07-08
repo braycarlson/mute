@@ -8,8 +8,8 @@ import (
 	"unsafe"
 
 	"github.com/JamesHovious/w32"
-	"github.com/braycarlson/muter/device"
-	"github.com/braycarlson/muter/settings"
+	"github.com/braycarlson/mute/device"
+	"github.com/braycarlson/mute/settings"
 	"github.com/getlantern/systray"
 	"github.com/go-ole/go-ole"
 	"github.com/moutend/go-wca/pkg/wca"
@@ -24,7 +24,7 @@ var (
 	hook  w32.HHOOK
 	queue []byte
 
-	MuteHotkey = []byte{33}
+	MuteHotkey []byte = []byte{33}
 
 	capture *device.Device
 	name    string
@@ -42,8 +42,8 @@ func listener(identifier int, wparam w32.WPARAM, lparam w32.LPARAM) w32.LRESULT 
 		w32.WPARAM(w32.WM_KEYDOWN),
 		w32.WPARAM(w32.WM_SYSKEYDOWN):
 
-		message := unsafe.Pointer(lparam)
-		kbdstruct := (*w32.KBDLLHOOKSTRUCT)(message)
+		var message unsafe.Pointer = unsafe.Pointer(lparam)
+		var kbdstruct *w32.KBDLLHOOKSTRUCT = (*w32.KBDLLHOOKSTRUCT)(message)
 
 		var key byte = byte(kbdstruct.VkCode)
 
@@ -75,14 +75,16 @@ func listener(identifier int, wparam w32.WPARAM, lparam w32.LPARAM) w32.LRESULT 
 }
 
 func setPriority(priority uintptr) error {
-	kernel := syscall.NewLazyDLL("kernel32.dll")
-	setPriorityClass := kernel.NewProc("SetPriorityClass")
+	var kernel *syscall.LazyDLL = syscall.NewLazyDLL("kernel32.dll")
+	var setPriorityClass *syscall.LazyProc = kernel.NewProc("SetPriorityClass")
+	var err error
 
-	if err := setPriorityClass.Find(); err != nil {
+	if err = setPriorityClass.Find(); err != nil {
 		return err
 	}
 
-	handle, err := syscall.GetCurrentProcess()
+	var handle syscall.Handle
+	handle, err = syscall.GetCurrentProcess()
 
 	if err != nil {
 		return err
@@ -90,7 +92,8 @@ func setPriority(priority uintptr) error {
 
 	defer syscall.CloseHandle(handle)
 
-	result, _, err := setPriorityClass.Call(uintptr(handle), priority)
+	var result uintptr
+	result, _, err = setPriorityClass.Call(uintptr(handle), priority)
 
 	if result != 0 {
 		return nil
@@ -100,6 +103,14 @@ func setPriority(priority uintptr) error {
 }
 
 func onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier string) error {
+	var err error
+
+	if err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
+		fmt.Println(err)
+	}
+
+	defer ole.CoUninitialize()
+
 	var identical bool = capture.IsDevice(identifier)
 
 	if identical {
@@ -108,9 +119,11 @@ func onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier s
 
 	switch dataflow {
 	case wca.ECapture:
-		capture.SetAsDefault()
+		err = capture.SetAsDefault()
+		fmt.Println(err)
 	default:
-		capture.SetAsDefault()
+		err = capture.SetAsDefault()
+		fmt.Println(err)
 	}
 
 	return nil
@@ -126,10 +139,7 @@ func onDeviceAdded(identifier string) error {
 
 func onDeviceRemoved(identifier string) error {
 	if capture.IsDevice(identifier) {
-		capture.MMDevice.Release()
-		capture.PropertyStore.Release()
-		capture.Volume.Release()
-
+		capture.Release()
 		capture = nil
 	}
 
@@ -142,10 +152,7 @@ func onDeviceStateChanged(identifier string, state uint64) error {
 	}
 
 	if capture.IsDevice(identifier) {
-		capture.MMDevice.Release()
-		capture.PropertyStore.Release()
-		capture.Volume.Release()
-
+		capture.Release()
 		capture = nil
 	}
 
@@ -170,25 +177,63 @@ func onExit() {
 }
 
 func run() {
-	var settings *settings.Settings = settings.NewSettings()
-	name = settings.Capture
+	var err error
 
-	if err := ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
+	if err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
 		fmt.Println(err)
 	}
 
 	defer ole.CoUninitialize()
 
+	var fallback *device.Device
+	fallback, _ = device.GetDefault(wca.ECapture, wca.EConsole)
+
+	var settings *settings.Settings = settings.NewSettings()
 	capture = device.Find(settings.Capture, wca.ECapture)
+	capture.SetVolume(70)
+
+	defer capture.Release()
 
 	if capture == nil {
 		fmt.Println("No capture device found")
+	}
+
+	if fallback.Name() != capture.Name() {
+		capture.SetAsDefault()
+		fallback.Release()
 	}
 
 	if capture.IsMuted() {
 		systray.SetIcon(mute)
 	} else {
 		systray.SetIcon(unmute)
+	}
+
+	var mmde *wca.IMMDeviceEnumerator
+
+	if err = wca.CoCreateInstance(
+		wca.CLSID_MMDeviceEnumerator,
+		0,
+		wca.CLSCTX_ALL,
+		wca.IID_IMMDeviceEnumerator,
+		&mmde,
+	); err != nil {
+		fmt.Println(err)
+	}
+
+	defer mmde.Release()
+
+	var callback wca.IMMNotificationClientCallback = wca.IMMNotificationClientCallback{
+		OnDefaultDeviceChanged: onDefaultDeviceChanged,
+		OnDeviceAdded:          onDeviceAdded,
+		OnDeviceRemoved:        onDeviceRemoved,
+		OnDeviceStateChanged:   onDeviceStateChanged,
+	}
+
+	var mmnc *wca.IMMNotificationClient = wca.NewIMMNotificationClient(callback)
+
+	if err = mmde.RegisterEndpointNotificationCallback(mmnc); err != nil {
+		fmt.Println(err)
 	}
 
 	queue = make([]byte, 0, 1)
@@ -206,31 +251,11 @@ func run() {
 		w32.TranslateMessage(&message)
 		w32.DispatchMessage(&message)
 	}
-
-	var mmde *wca.IMMDeviceEnumerator
-
-	if err := wca.CoCreateInstance(wca.CLSID_MMDeviceEnumerator, 0, wca.CLSCTX_ALL, wca.IID_IMMDeviceEnumerator, &mmde); err != nil {
-		fmt.Println(err)
-	}
-
-	defer mmde.Release()
-
-	callback := wca.IMMNotificationClientCallback{
-		OnDefaultDeviceChanged: onDefaultDeviceChanged,
-		OnDeviceAdded:          onDeviceAdded,
-		OnDeviceRemoved:        onDeviceRemoved,
-		OnDeviceStateChanged:   onDeviceStateChanged,
-	}
-
-	mmnc := wca.NewIMMNotificationClient(callback)
-
-	if err := mmde.RegisterEndpointNotificationCallback(mmnc); err != nil {
-		fmt.Println(err)
-	}
 }
 
 func main() {
-	err := setPriority(HighPriority)
+	var err error
+	err = setPriority(HighPriority)
 
 	if err != nil {
 		fmt.Println(err)
