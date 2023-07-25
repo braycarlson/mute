@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	_ "embed"
-	"fmt"
-	"syscall"
+	"log"
+	"os"
+	"path/filepath"
+	"sync"
 	"unsafe"
 
 	"github.com/JamesHovious/w32"
@@ -13,22 +15,9 @@ import (
 	"github.com/getlantern/systray"
 	"github.com/go-ole/go-ole"
 	"github.com/moutend/go-wca/pkg/wca"
-	"golang.design/x/hotkey/mainthread"
-)
-
-const (
-	HighPriority = 0x00000080
 )
 
 var (
-	hook  w32.HHOOK
-	queue []byte
-
-	MuteHotkey []byte = []byte{33}
-
-	capture *device.Device
-	name    string
-
 	//go:embed asset/mute.ico
 	mute []byte
 
@@ -36,7 +25,26 @@ var (
 	unmute []byte
 )
 
-func listener(identifier int, wparam w32.WPARAM, lparam w32.LPARAM) w32.LRESULT {
+type Mute struct {
+	hook    w32.HHOOK
+	queue   []byte
+	hotkey  []byte
+	capture *device.Device
+	name    string
+	mutex   sync.Mutex
+	mute    *[]byte
+	unmute  *[]byte
+}
+
+func NewMute() *Mute {
+	return &Mute{
+		hotkey: []byte{33},
+		mute:   &mute,
+		unmute: &unmute,
+	}
+}
+
+func (mute *Mute) listener(identifier int, wparam w32.WPARAM, lparam w32.LPARAM) w32.LRESULT {
 	switch wparam {
 	case
 		w32.WPARAM(w32.WM_KEYDOWN),
@@ -47,71 +55,59 @@ func listener(identifier int, wparam w32.WPARAM, lparam w32.LPARAM) w32.LRESULT 
 
 		var key byte = byte(kbdstruct.VkCode)
 
-		if len(queue) == 1 {
-			queue = queue[1:]
+		if len(mute.queue) == 1 {
+			mute.queue = mute.queue[1:]
 		}
 
-		queue = append(queue, key)
+		mute.queue = append(mute.queue, key)
 
-		if bytes.Equal(queue, MuteHotkey) {
-			if capture.IsMuted() {
-				capture.Unmute()
-				systray.SetIcon(unmute)
+		if bytes.Equal(mute.queue, mute.hotkey) {
+			mute.mutex.Lock()
+
+			if mute.capture != nil && mute.capture.IsMuted() {
+				mute.capture.Unmute()
+				systray.SetIcon(*mute.unmute)
+
+				log.Println("The device was muted.")
 			} else {
-				capture.Mute()
-				systray.SetIcon(mute)
+				mute.capture.Mute()
+				systray.SetIcon(*mute.mute)
+
+				log.Println("The device was unmuted.")
 			}
 
+			mute.mutex.Unlock()
 			return 1
 		}
 	}
 
 	return w32.CallNextHookEx(
-		w32.HHOOK(hook),
+		w32.HHOOK(mute.hook),
 		identifier,
 		wparam,
 		lparam,
 	)
 }
 
-func setPriority(priority uintptr) error {
-	var kernel *syscall.LazyDLL = syscall.NewLazyDLL("kernel32.dll")
-	var setPriorityClass *syscall.LazyProc = kernel.NewProc("SetPriorityClass")
-	var err error
+func (mute *Mute) onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier string) error {
+	log.Println("The default device was changed.")
 
-	if err = setPriorityClass.Find(); err != nil {
-		return err
-	}
-
-	var handle syscall.Handle
-	handle, err = syscall.GetCurrentProcess()
-
-	if err != nil {
-		return err
-	}
-
-	defer syscall.CloseHandle(handle)
-
-	var result uintptr
-	result, _, err = setPriorityClass.Call(uintptr(handle), priority)
-
-	if result != 0 {
-		return nil
-	}
-
-	return nil
-}
-
-func onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier string) error {
 	var err error
 
 	if err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
-		fmt.Println(err)
+		log.Fatalln(err)
 	}
 
 	defer ole.CoUninitialize()
 
-	var identical bool = capture.IsDevice(identifier)
+	mute.mutex.Lock()
+	defer mute.mutex.Unlock()
+
+	var identical bool = false
+
+	if mute.capture != nil {
+		identical = mute.capture.IsDevice(identifier)
+	}
 
 	if identical {
 		return nil
@@ -119,47 +115,64 @@ func onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier s
 
 	switch dataflow {
 	case wca.ECapture:
-		err = capture.SetAsDefault()
-		fmt.Println(err)
+		err = mute.capture.SetAsDefault()
+		log.Fatalln(err)
 	default:
-		err = capture.SetAsDefault()
-		fmt.Println(err)
+		err = mute.capture.SetAsDefault()
+		log.Fatalln(err)
 	}
 
 	return nil
 }
 
-func onDeviceAdded(identifier string) error {
-	if capture == nil {
-		capture = device.Find(name, wca.ECapture)
+func (mute *Mute) onDeviceAdded(identifier string) error {
+	log.Println("A device was added.")
+
+	mute.mutex.Lock()
+	defer mute.mutex.Unlock()
+
+	if mute.capture == nil {
+		mute.capture = device.Find(mute.name, wca.ECapture)
 	}
 
 	return nil
 }
 
-func onDeviceRemoved(identifier string) error {
-	if capture.IsDevice(identifier) {
-		capture.Release()
-		capture = nil
+func (mute *Mute) onDeviceRemoved(identifier string) error {
+	log.Println("A device was removed.")
+
+	mute.mutex.Lock()
+	defer mute.mutex.Unlock()
+
+	if mute.capture != nil && mute.capture.IsDevice(identifier) {
+		mute.capture.Release()
+		mute.capture = nil
 	}
 
 	return nil
 }
 
-func onDeviceStateChanged(identifier string, state uint64) error {
+func (mute *Mute) onDeviceStateChanged(identifier string, state uint64) error {
+	log.Println("The state of a device was changed.")
+
 	if state == wca.DEVICE_STATE_ACTIVE {
 		return nil
 	}
 
-	if capture.IsDevice(identifier) {
-		capture.Release()
-		capture = nil
+	mute.mutex.Lock()
+	defer mute.mutex.Unlock()
+
+	if mute.capture != nil && mute.capture.IsDevice(identifier) {
+		mute.capture.Release()
+		mute.capture = nil
 	}
 
 	return nil
 }
 
-func onReady() {
+func (mute *Mute) onReady() {
+	log.Println("Starting...")
+
 	systray.SetTitle("Mute")
 	systray.SetTooltip("Mute")
 	quit := systray.AddMenuItem("Quit", "Quit")
@@ -169,18 +182,20 @@ func onReady() {
 		systray.Quit()
 	}()
 
-	mainthread.Init(run)
+	mute.run()
 }
 
-func onExit() {
-	w32.UnhookWindowsHookEx(hook)
+func (mute *Mute) onExit() {
+	log.Println("Exiting...")
+
+	w32.UnhookWindowsHookEx(mute.hook)
 }
 
-func run() {
+func (mute *Mute) run() {
 	var err error
 
 	if err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
-		fmt.Println(err)
+		log.Fatalln(err)
 	}
 
 	defer ole.CoUninitialize()
@@ -189,24 +204,24 @@ func run() {
 	fallback, _ = device.GetDefault(wca.ECapture, wca.EConsole)
 
 	var settings *settings.Settings = settings.NewSettings()
-	capture = device.Find(settings.Capture, wca.ECapture)
-	capture.SetVolume(70)
+	mute.capture = device.Find(settings.Capture, wca.ECapture)
+	mute.capture.SetVolume(70)
 
-	defer capture.Release()
+	defer mute.capture.Release()
 
-	if capture == nil {
-		fmt.Println("No capture device found")
+	if mute.capture == nil {
+		log.Fatalln("No capture device found")
 	}
 
-	if fallback.Name() != capture.Name() {
-		capture.SetAsDefault()
+	if fallback.Name() != mute.capture.Name() {
+		mute.capture.SetAsDefault()
 		fallback.Release()
 	}
 
-	if capture.IsMuted() {
-		systray.SetIcon(mute)
+	if mute.capture.IsMuted() {
+		systray.SetIcon(*mute.mute)
 	} else {
-		systray.SetIcon(unmute)
+		systray.SetIcon(*mute.unmute)
 	}
 
 	var mmde *wca.IMMDeviceEnumerator
@@ -218,29 +233,29 @@ func run() {
 		wca.IID_IMMDeviceEnumerator,
 		&mmde,
 	); err != nil {
-		fmt.Println(err)
+		log.Fatalln(err)
 	}
 
 	defer mmde.Release()
 
 	var callback wca.IMMNotificationClientCallback = wca.IMMNotificationClientCallback{
-		OnDefaultDeviceChanged: onDefaultDeviceChanged,
-		OnDeviceAdded:          onDeviceAdded,
-		OnDeviceRemoved:        onDeviceRemoved,
-		OnDeviceStateChanged:   onDeviceStateChanged,
+		OnDefaultDeviceChanged: mute.onDefaultDeviceChanged,
+		OnDeviceAdded:          mute.onDeviceAdded,
+		OnDeviceRemoved:        mute.onDeviceRemoved,
+		OnDeviceStateChanged:   mute.onDeviceStateChanged,
 	}
 
 	var mmnc *wca.IMMNotificationClient = wca.NewIMMNotificationClient(callback)
 
 	if err = mmde.RegisterEndpointNotificationCallback(mmnc); err != nil {
-		fmt.Println(err)
+		log.Fatalln(err)
 	}
 
-	queue = make([]byte, 0, 1)
+	mute.queue = make([]byte, 0, 1)
 
-	hook = w32.SetWindowsHookEx(
+	mute.hook = w32.SetWindowsHookEx(
 		w32.WH_KEYBOARD_LL,
-		w32.HOOKPROC(listener),
+		w32.HOOKPROC(mute.listener),
 		0,
 		0,
 	)
@@ -255,11 +270,27 @@ func run() {
 
 func main() {
 	var err error
-	err = setPriority(HighPriority)
 
-	if err != nil {
-		fmt.Println(err)
+	var configuration, _ = os.UserConfigDir()
+	var home = filepath.Join(configuration, "mute")
+	var path = filepath.Join(home, "mute.log")
+
+	if err = os.MkdirAll(home, os.ModeDir); err != nil {
+		log.Fatalln(err)
 	}
 
-	systray.Run(onReady, onExit)
+	file, err := os.OpenFile(
+		path,
+		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
+		0666,
+	)
+
+	if err != nil {
+		log.Println(err)
+	}
+
+	log.SetOutput(file)
+
+	var mute *Mute = NewMute()
+	systray.Run(mute.onReady, mute.onExit)
 }
