@@ -32,15 +32,15 @@ type Mute struct {
 	capture *device.Device
 	name    string
 	mutex   sync.Mutex
-	mute    *[]byte
-	unmute  *[]byte
+	mute    []byte
+	unmute  []byte
 }
 
 func NewMute() *Mute {
 	return &Mute{
 		hotkey: []byte{33},
-		mute:   &mute,
-		unmute: &unmute,
+		mute:   mute,
+		unmute: unmute,
 	}
 }
 
@@ -66,12 +66,12 @@ func (mute *Mute) listener(identifier int, wparam w32.WPARAM, lparam w32.LPARAM)
 
 			if mute.capture != nil && mute.capture.IsMuted() {
 				mute.capture.Unmute()
-				systray.SetIcon(*mute.unmute)
+				systray.SetIcon(mute.unmute)
 
 				log.Println("The device was muted.")
 			} else {
 				mute.capture.Mute()
-				systray.SetIcon(*mute.mute)
+				systray.SetIcon(mute.mute)
 
 				log.Println("The device was unmuted.")
 			}
@@ -219,9 +219,9 @@ func (mute *Mute) run() {
 	}
 
 	if mute.capture.IsMuted() {
-		systray.SetIcon(*mute.mute)
+		systray.SetIcon(mute.mute)
 	} else {
-		systray.SetIcon(*mute.unmute)
+		systray.SetIcon(mute.unmute)
 	}
 
 	var mmde *wca.IMMDeviceEnumerator

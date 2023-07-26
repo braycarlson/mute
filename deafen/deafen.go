@@ -32,15 +32,15 @@ type Deafen struct {
 	render   *device.Device
 	name     string
 	mutex    sync.Mutex
-	deafen   *[]byte
-	undeafen *[]byte
+	deafen   []byte
+	undeafen []byte
 }
 
 func NewDeafen() *Deafen {
 	return &Deafen{
 		hotkey:   []byte{34},
-		deafen:   &deafen,
-		undeafen: &undeafen,
+		deafen:   deafen,
+		undeafen: undeafen,
 	}
 }
 
@@ -63,12 +63,12 @@ func (deafen *Deafen) listener(identifier int, wparam w32.WPARAM, lparam w32.LPA
 
 			if deafen.render.IsMuted() {
 				deafen.render.Unmute()
-				systray.SetIcon(*deafen.undeafen)
+				systray.SetIcon(deafen.undeafen)
 
 				log.Println("The device was undeafened.")
 			} else {
 				deafen.render.Mute()
-				systray.SetIcon(*deafen.deafen)
+				systray.SetIcon(deafen.deafen)
 
 				log.Println("The device was deafened.")
 			}
@@ -216,9 +216,9 @@ func (deafen *Deafen) run() {
 	}
 
 	if deafen.render.IsMuted() {
-		systray.SetIcon(*deafen.deafen)
+		systray.SetIcon(deafen.deafen)
 	} else {
-		systray.SetIcon(*deafen.undeafen)
+		systray.SetIcon(deafen.undeafen)
 	}
 
 	var mmde *wca.IMMDeviceEnumerator
