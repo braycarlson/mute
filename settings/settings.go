@@ -21,7 +21,9 @@ func NewSettings() *Settings {
 
 	var err error
 
-	if err = os.MkdirAll(home, os.ModeDir); err != nil {
+	err = os.MkdirAll(home, os.ModeDir)
+
+	if err != nil {
 		return &Settings{}
 	}
 
@@ -36,9 +38,11 @@ func NewSettings() *Settings {
 	if err == nil {
 		file.NewSection("capture")
 		file.Section("capture").NewKey("name", "Microphone")
+		// file.Section("capture").NewKey("volume", "70")
 
 		file.NewSection("render")
 		file.Section("render").NewKey("name", "Speaker")
+		// file.Section("render").NewKey("volume", "30")
 
 		err = file.SaveTo(path)
 	}

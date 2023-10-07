@@ -1,16 +1,16 @@
 package main
 
 import (
-	"bytes"
 	_ "embed"
 	"log"
 	"os"
 	"path/filepath"
-	"sync"
 	"unsafe"
 
 	"github.com/JamesHovious/w32"
+	"github.com/braycarlson/mute/buffer"
 	"github.com/braycarlson/mute/device"
+	"github.com/braycarlson/mute/manager"
 	"github.com/braycarlson/mute/settings"
 	"github.com/getlantern/systray"
 	"github.com/go-ole/go-ole"
@@ -26,21 +26,41 @@ var (
 )
 
 type Mute struct {
-	hook    w32.HHOOK
-	queue   []byte
-	hotkey  []byte
-	capture *device.Device
-	name    string
-	mutex   sync.Mutex
-	mute    []byte
-	unmute  []byte
+	hook     w32.HHOOK
+	queue    *buffer.CircularBuffer
+	hotkey   []byte
+	capture  *device.Device
+	manager  *manager.AudioManager
+	name     string
+	mute     []byte
+	unmute   []byte
+	logger   chan string
+	shutdown chan bool
 }
 
 func NewMute() *Mute {
 	return &Mute{
-		hotkey: []byte{33},
-		mute:   mute,
-		unmute: unmute,
+		hotkey:   []byte{33},
+		queue:    buffer.NewCircularBuffer(2),
+		mute:     mute,
+		unmute:   unmute,
+		logger:   make(chan string, 1000),
+		shutdown: make(chan bool),
+	}
+}
+
+func (mute *Mute) logging() {
+	for {
+		select {
+		case message, ok := <-mute.logger:
+			if !ok {
+				return
+			}
+
+			log.Println(message)
+		case <-mute.shutdown:
+			close(mute.logger)
+		}
 	}
 }
 
@@ -54,128 +74,143 @@ func (mute *Mute) listener(identifier int, wparam w32.WPARAM, lparam w32.LPARAM)
 		var kbdstruct *w32.KBDLLHOOKSTRUCT = (*w32.KBDLLHOOKSTRUCT)(message)
 
 		var key byte = byte(kbdstruct.VkCode)
+		mute.queue.Push(key)
 
-		if len(mute.queue) == 1 {
-			mute.queue = mute.queue[1:]
-		}
+		if mute.queue.IsMatch(mute.hotkey) {
+			if mute.capture == nil {
+				return 1
+			}
 
-		mute.queue = append(mute.queue, key)
-
-		if bytes.Equal(mute.queue, mute.hotkey) {
-			mute.mutex.Lock()
-
-			if mute.capture != nil && mute.capture.IsMuted() {
+			if mute.capture.IsMuted() {
 				mute.capture.Unmute()
 				systray.SetIcon(mute.unmute)
 
-				log.Println("The device was muted.")
+				mute.logger <- "The device was unmuted."
 			} else {
 				mute.capture.Mute()
 				systray.SetIcon(mute.mute)
 
-				log.Println("The device was unmuted.")
+				mute.logger <- "The device was muted."
 			}
 
-			mute.mutex.Unlock()
 			return 1
 		}
 	}
 
-	return w32.CallNextHookEx(
+	var result w32.LRESULT = w32.CallNextHookEx(
 		w32.HHOOK(mute.hook),
 		identifier,
 		wparam,
 		lparam,
 	)
+
+	return result
 }
 
 func (mute *Mute) onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier string) error {
-	log.Println("The default device was changed.")
-
-	var err error
-
-	if err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
-		log.Fatalln(err)
-	}
-
-	defer ole.CoUninitialize()
-
-	mute.mutex.Lock()
-	defer mute.mutex.Unlock()
-
-	var identical bool = false
-
-	if mute.capture != nil {
-		identical = mute.capture.IsDevice(identifier)
-	}
-
-	if identical {
+	if mute.capture == nil || dataflow == wca.ERender {
 		return nil
 	}
 
-	switch dataflow {
-	case wca.ECapture:
-		err = mute.capture.SetAsDefault()
-		log.Fatalln(err)
-	default:
-		err = mute.capture.SetAsDefault()
-		log.Fatalln(err)
+	var id string
+	var err error
+
+	id, err = mute.capture.Id()
+
+	if id == identifier {
+		return nil
+	}
+
+	mute.logger <- "The default device was changed."
+
+	var enabled bool
+	enabled, err = mute.capture.IsEnabled()
+
+	if !enabled {
+		return nil
+	}
+
+	err = mute.capture.SetAsDefault()
+
+	if err != nil {
+		log.Println(err)
 	}
 
 	return nil
 }
 
 func (mute *Mute) onDeviceAdded(identifier string) error {
-	log.Println("A device was added.")
+	mute.logger <- "A device was added."
 
-	mute.mutex.Lock()
-	defer mute.mutex.Unlock()
+	var err error
 
 	if mute.capture == nil {
-		mute.capture = device.Find(mute.name, wca.ECapture)
+		var capture *device.Device
+		capture, err = mute.manager.Find(mute.name, wca.ECapture)
+
+		if err == nil {
+			mute.capture = capture
+
+			err = mute.capture.SetAsDefault()
+
+			if err != nil {
+				log.Println(err)
+			}
+		}
 	}
 
-	return nil
+	return err
 }
 
 func (mute *Mute) onDeviceRemoved(identifier string) error {
-	log.Println("A device was removed.")
+	mute.logger <- "A device was removed."
 
-	mute.mutex.Lock()
-	defer mute.mutex.Unlock()
-
-	if mute.capture != nil && mute.capture.IsDevice(identifier) {
-		mute.capture.Release()
-		mute.capture = nil
-	}
-
-	return nil
-}
-
-func (mute *Mute) onDeviceStateChanged(identifier string, state uint64) error {
-	log.Println("The state of a device was changed.")
-
-	if state == wca.DEVICE_STATE_ACTIVE {
+	if mute.capture == nil {
 		return nil
 	}
 
-	mute.mutex.Lock()
-	defer mute.mutex.Unlock()
+	var id string
+	var err error
 
-	if mute.capture != nil && mute.capture.IsDevice(identifier) {
+	id, err = mute.capture.Id()
+
+	if id == identifier {
 		mute.capture.Release()
 		mute.capture = nil
+	}
+
+	return err
+}
+
+func (mute *Mute) onDeviceStateChanged(identifier string, state uint64) error {
+	if mute.capture == nil || state == 0 {
+		return nil
+	}
+
+	mute.logger <- "The state of a device was changed."
+
+	switch state {
+	case 1:
+		mute.logger <- "The audio endpoint device is disabled."
+	case 2:
+		mute.logger <- "The audio endpoint device is not present."
+	case 3:
+		mute.logger <- "The audio endpoint device is unplugged."
 	}
 
 	return nil
 }
 
 func (mute *Mute) onReady() {
-	log.Println("Starting...")
+	go mute.logging()
+
+	mute.logger <- "Starting..."
 
 	systray.SetTitle("Mute")
 	systray.SetTooltip("Mute")
-	quit := systray.AddMenuItem("Quit", "Quit")
+
+	var quit *systray.MenuItem
+	quit = systray.AddMenuItem("Quit", "Quit")
 
 	go func() {
 		<-quit.ClickedCh
@@ -186,7 +221,11 @@ func (mute *Mute) onReady() {
 }
 
 func (mute *Mute) onExit() {
-	log.Println("Exiting...")
+	mute.logger <- "Exiting..."
+
+	if mute.capture != nil {
+		mute.capture.Release()
+	}
 
 	w32.UnhookWindowsHookEx(mute.hook)
 }
@@ -194,49 +233,53 @@ func (mute *Mute) onExit() {
 func (mute *Mute) run() {
 	var err error
 
-	if err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED); err != nil {
+	err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED)
+
+	if err != nil {
 		log.Fatalln(err)
 	}
 
 	defer ole.CoUninitialize()
 
-	var fallback *device.Device
-	fallback, _ = device.GetDefault(wca.ECapture, wca.EConsole)
-
+	var capture *device.Device
 	var settings *settings.Settings = settings.NewSettings()
-	mute.capture = device.Find(settings.Capture, wca.ECapture)
-	mute.capture.SetVolume(70)
 
-	defer mute.capture.Release()
+	capture, err = mute.manager.Find(settings.Capture, wca.ECapture)
 
-	if mute.capture == nil {
-		log.Fatalln("No capture device found")
-	}
-
-	if fallback.Name() != mute.capture.Name() {
-		mute.capture.SetAsDefault()
-		fallback.Release()
-	}
-
-	if mute.capture.IsMuted() {
-		systray.SetIcon(mute.mute)
-	} else {
+	if capture == nil || err != nil {
+		mute.logger <- "No capture device found"
 		systray.SetIcon(mute.unmute)
+	} else {
+		mute.capture = capture
+		mute.capture.SetVolume(70)
+
+		var status bool
+		status, err = mute.capture.IsAllDefault()
+
+		if !status {
+			mute.capture.SetAsDefault()
+		}
+
+		if mute.capture.IsMuted() {
+			systray.SetIcon(mute.mute)
+		} else {
+			systray.SetIcon(mute.unmute)
+		}
 	}
 
 	var mmde *wca.IMMDeviceEnumerator
 
-	if err = wca.CoCreateInstance(
+	err = wca.CoCreateInstance(
 		wca.CLSID_MMDeviceEnumerator,
 		0,
 		wca.CLSCTX_ALL,
 		wca.IID_IMMDeviceEnumerator,
 		&mmde,
-	); err != nil {
+	)
+
+	if err != nil {
 		log.Fatalln(err)
 	}
-
-	defer mmde.Release()
 
 	var callback wca.IMMNotificationClientCallback = wca.IMMNotificationClientCallback{
 		OnDefaultDeviceChanged: mute.onDefaultDeviceChanged,
@@ -247,11 +290,14 @@ func (mute *Mute) run() {
 
 	var mmnc *wca.IMMNotificationClient = wca.NewIMMNotificationClient(callback)
 
-	if err = mmde.RegisterEndpointNotificationCallback(mmnc); err != nil {
+	err = mmde.RegisterEndpointNotificationCallback(mmnc)
+
+	if err != nil {
 		log.Fatalln(err)
 	}
 
-	mute.queue = make([]byte, 0, 1)
+	defer mmde.UnregisterEndpointNotificationCallback(mmnc)
+	defer mmde.Release()
 
 	mute.hook = w32.SetWindowsHookEx(
 		w32.WH_KEYBOARD_LL,
@@ -275,11 +321,15 @@ func main() {
 	var home = filepath.Join(configuration, "mute")
 	var path = filepath.Join(home, "mute.log")
 
-	if err = os.MkdirAll(home, os.ModeDir); err != nil {
+	err = os.MkdirAll(home, os.ModeDir)
+
+	if err != nil {
 		log.Fatalln(err)
 	}
 
-	file, err := os.OpenFile(
+	var file *os.File
+
+	file, err = os.OpenFile(
 		path,
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
 		0666,
@@ -290,6 +340,8 @@ func main() {
 	}
 
 	log.SetOutput(file)
+
+	defer file.Close()
 
 	var mute *Mute = NewMute()
 	systray.Run(mute.onReady, mute.onExit)

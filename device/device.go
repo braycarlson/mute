@@ -7,7 +7,6 @@ import (
 
 	"github.com/braycarlson/mute/policy"
 	"github.com/go-ole/go-ole"
-	"github.com/lithammer/fuzzysearch/fuzzy"
 	"github.com/moutend/go-wca/pkg/wca"
 )
 
@@ -18,6 +17,10 @@ type Device struct {
 }
 
 func (device *Device) Endpoint(endpoint *string) (err error) {
+	if device.MMDevice == nil {
+		return errors.New("MMDevice is nil")
+	}
+
 	var ptr uint64
 
 	var hresult uintptr
@@ -31,6 +34,7 @@ func (device *Device) Endpoint(endpoint *string) (err error) {
 	)
 
 	if hresult != 0 {
+		ole.CoTaskMemFree(uintptr(ptr))
 		err = ole.NewError(hresult)
 		return
 	}
@@ -55,138 +59,161 @@ func (device *Device) Endpoint(endpoint *string) (err error) {
 	*endpoint = syscall.UTF16ToString(unicode)
 	ole.CoTaskMemFree(uintptr(ptr))
 
-	return
+	return nil
 }
 
-func Find(name string, dataflow uint32) *Device {
-	var mmde *wca.IMMDeviceEnumerator
+func (device *Device) Id() (string, error) {
+	if device.MMDevice == nil {
+		return "", errors.New("MMDevice is nil")
+	}
 
-	wca.CoCreateInstance(
+	var identifier string
+	var err error
+
+	err = device.MMDevice.GetId(&identifier)
+
+	if err != nil {
+		return "", err
+	}
+
+	return identifier, nil
+}
+
+func (device *Device) IsAllDefault() (bool, error) {
+	if device.MMDevice == nil {
+		return false, errors.New("MMDevice is nil")
+	}
+
+	var enumerator *wca.IMMDeviceEnumerator
+	var err error
+
+	err = wca.CoCreateInstance(
 		wca.CLSID_MMDeviceEnumerator,
 		0,
 		wca.CLSCTX_ALL,
 		wca.IID_IMMDeviceEnumerator,
-		&mmde,
+		&enumerator,
 	)
 
-	defer mmde.Release()
+	if err != nil {
+		return false, err
+	}
 
-	var mmdc *wca.IMMDeviceCollection
+	defer enumerator.Release()
 
-	mmde.EnumAudioEndpoints(
-		dataflow,
-		wca.DEVICE_STATE_ACTIVE,
-		&mmdc,
-	)
+	roles := []wca.ERole{
+		wca.EConsole,
+		wca.ECommunications,
+		wca.EMultimedia,
+	}
 
-	defer mmdc.Release()
+	var deviceID string
+	deviceID, err = device.Id()
 
-	var count uint32
-	mmdc.GetCount(&count)
+	if err != nil {
+		return false, err
+	}
 
-	var target *Device
+	for _, role := range roles {
+		var pDefaultDevice *wca.IMMDevice
 
-	var index uint32
-
-	for index = 0; index < count; index++ {
-		var mmd *wca.IMMDevice
-		mmdc.Item(index, &mmd)
-
-		var aev *wca.IAudioEndpointVolume
-
-		mmd.Activate(
-			wca.IID_IAudioEndpointVolume,
-			wca.CLSCTX_ALL,
-			nil,
-			&aev,
+		err = enumerator.GetDefaultAudioEndpoint(
+			wca.ERender,
+			uint32(role),
+			&pDefaultDevice,
 		)
 
-		var ps *wca.IPropertyStore
-		mmd.OpenPropertyStore(wca.STGM_READ, &ps)
+		if err != nil {
+			return false, err
+		}
 
-		var pv wca.PROPVARIANT
-		ps.GetValue(&wca.PKEY_Device_FriendlyName, &pv)
+		var defaultID string
+		err = pDefaultDevice.GetId(&defaultID)
 
-		var identifier string = pv.String()
-		var score int = 20
+		pDefaultDevice.Release()
 
-		var distance int = fuzzy.LevenshteinDistance(identifier, name)
+		if err != nil {
+			return false, err
+		}
 
-		if distance > score {
-			defer mmd.Release()
-			defer ps.Release()
-			defer aev.Release()
-		} else {
-			score = distance
-
-			target = &Device{
-				MMDevice:      mmd,
-				PropertyStore: ps,
-				Volume:        aev,
-			}
+		if deviceID != defaultID {
+			return false, nil
 		}
 	}
 
-	return target
+	return true, nil
 }
 
-func GetDefault(dataflow uint32, role uint32) (*Device, error) {
-	var mmde *wca.IMMDeviceEnumerator
-	var mmd *wca.IMMDevice
-	var aev *wca.IAudioEndpointVolume
-	var ps *wca.IPropertyStore
+func (device *Device) IsDefault(role wca.ERole) (bool, error) {
+	if device.MMDevice == nil {
+		return false, errors.New("MMDevice is nil")
+	}
+
+	var enumerator *wca.IMMDeviceEnumerator
 	var err error
 
-	if err = wca.CoCreateInstance(
+	err = wca.CoCreateInstance(
 		wca.CLSID_MMDeviceEnumerator,
 		0,
 		wca.CLSCTX_ALL,
 		wca.IID_IMMDeviceEnumerator,
-		&mmde,
-	); err != nil {
-		return nil, err
-	}
-	defer mmde.Release()
-
-	if err = mmde.GetDefaultAudioEndpoint(dataflow, role, &mmd); err != nil {
-		return nil, err
-	}
-
-	mmd.Activate(
-		wca.IID_IAudioEndpointVolume,
-		wca.CLSCTX_ALL,
-		nil,
-		&aev,
+		&enumerator,
 	)
 
-	mmd.OpenPropertyStore(wca.STGM_READ, &ps)
-
-	return &Device{
-		MMDevice:      mmd,
-		PropertyStore: ps,
-		Volume:        aev,
-	}, nil
-}
-
-func (device *Device) Id() string {
-	if device.MMDevice == nil {
-		return ""
+	if err != nil {
+		enumerator.Release()
+		return false, err
 	}
 
-	var ps *wca.IPropertyStore
-	device.MMDevice.OpenPropertyStore(wca.STGM_READ, &ps)
+	defer enumerator.Release()
 
-	var pv wca.PROPVARIANT
-	ps.GetValue(&wca.PKEY_AudioEndpoint_GUID, &pv)
+	var pDefaultDevice *wca.IMMDevice
 
-	return pv.String()
+	err = enumerator.GetDefaultAudioEndpoint(
+		wca.ERender,
+		uint32(role),
+		&pDefaultDevice,
+	)
+
+	if err != nil {
+		enumerator.Release()
+		return false, err
+	}
+
+	defer pDefaultDevice.Release()
+
+	var deviceID string
+	deviceID, err = device.Id()
+
+	if err != nil {
+		return false, err
+	}
+
+	var defaultID string
+	err = pDefaultDevice.GetId(&defaultID)
+
+	if err != nil {
+		return false, err
+	}
+
+	return deviceID == defaultID, nil
 }
 
-func (device *Device) IsDevice(identifier string) bool {
-	var endpoint string
-	device.Endpoint(&endpoint)
+func (device *Device) IsEnabled() (bool, error) {
+	if device.MMDevice == nil {
+		return false, errors.New("MMDevice is nil")
+	}
 
-	return identifier == endpoint
+	var state uint32
+	var err error
+
+	err = device.MMDevice.GetState(&state)
+
+	if err != nil {
+		return false, err
+	}
+
+	return state == wca.DEVICE_STATE_ACTIVE, nil
 }
 
 func (device *Device) IsMuted() bool {
@@ -222,6 +249,8 @@ func (device *Device) Name() string {
 	var ps *wca.IPropertyStore
 	device.MMDevice.OpenPropertyStore(wca.STGM_READ, &ps)
 
+	defer ps.Release()
+
 	var pv wca.PROPVARIANT
 	ps.GetValue(&wca.PKEY_Device_FriendlyName, &pv)
 
@@ -233,11 +262,12 @@ func (device *Device) ToggleMute() bool {
 		return false
 	}
 
-	currentState := device.IsMuted()
-	newState := !currentState
-	device.Volume.SetMute(newState, nil)
+	var current bool = device.IsMuted()
+	var state bool = !current
 
-	return newState
+	device.Volume.SetMute(state, nil)
+
+	return state
 }
 
 func (device *Device) Release() {
@@ -258,31 +288,48 @@ func (device *Device) Release() {
 }
 
 func (device *Device) SetAsDefault() error {
-	var pcv *policy.IPolicyConfigVista
 	var err error
 
-	if err = wca.CoCreateInstance(
+	err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED)
+
+	if err != nil {
+		return err
+	}
+
+	defer ole.CoUninitialize()
+
+	var pcv *policy.IPolicyConfigVista
+
+	err = wca.CoCreateInstance(
 		policy.CLSID_PolicyConfigVista,
 		0,
 		wca.CLSCTX_ALL,
 		policy.IID_IPolicyConfigVista,
 		&pcv,
-	); err != nil {
+	)
+
+	if err != nil {
 		return err
 	}
 
 	var endpoint string
 	device.Endpoint(&endpoint)
 
-	if err = pcv.SetDefaultEndpoint(endpoint, wca.EConsole); err != nil {
+	err = pcv.SetDefaultEndpoint(endpoint, wca.EConsole)
+
+	if err != nil {
 		return err
 	}
 
-	if err = pcv.SetDefaultEndpoint(endpoint, wca.ECommunications); err != nil {
+	err = pcv.SetDefaultEndpoint(endpoint, wca.ECommunications)
+
+	if err != nil {
 		return err
 	}
 
-	if err = pcv.SetDefaultEndpoint(endpoint, wca.EMultimedia); err != nil {
+	err = pcv.SetDefaultEndpoint(endpoint, wca.EMultimedia)
+
+	if err != nil {
 		return err
 	}
 
