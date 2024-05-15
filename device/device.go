@@ -22,7 +22,6 @@ func (device *Device) Endpoint(endpoint *string) (err error) {
 	}
 
 	var ptr uint64
-
 	var hresult uintptr
 
 	hresult, _, _ = syscall.Syscall(
@@ -71,12 +70,7 @@ func (device *Device) Id() (string, error) {
 	var err error
 
 	err = device.MMDevice.GetId(&identifier)
-
-	if err != nil {
-		return "", err
-	}
-
-	return identifier, nil
+	return identifier, err
 }
 
 func (device *Device) IsAllDefault() (bool, error) {
@@ -87,25 +81,13 @@ func (device *Device) IsAllDefault() (bool, error) {
 	var enumerator *wca.IMMDeviceEnumerator
 	var err error
 
-	err = wca.CoCreateInstance(
-		wca.CLSID_MMDeviceEnumerator,
-		0,
-		wca.CLSCTX_ALL,
-		wca.IID_IMMDeviceEnumerator,
-		&enumerator,
-	)
+	enumerator, err = createDeviceEnumerator()
 
 	if err != nil {
 		return false, err
 	}
 
 	defer enumerator.Release()
-
-	roles := []wca.ERole{
-		wca.EConsole,
-		wca.ECommunications,
-		wca.EMultimedia,
-	}
 
 	var deviceID string
 	deviceID, err = device.Id()
@@ -114,23 +96,24 @@ func (device *Device) IsAllDefault() (bool, error) {
 		return false, err
 	}
 
+	roles := []wca.ERole{
+		wca.EConsole,
+		wca.ECommunications,
+		wca.EMultimedia,
+	}
+
 	for _, role := range roles {
 		var pDefaultDevice *wca.IMMDevice
-
-		err = enumerator.GetDefaultAudioEndpoint(
-			wca.ERender,
-			uint32(role),
-			&pDefaultDevice,
-		)
+		pDefaultDevice, err = getDefaultAudioEndpoint(enumerator, role)
 
 		if err != nil {
 			return false, err
 		}
 
+		defer pDefaultDevice.Release()
+
 		var defaultID string
 		err = pDefaultDevice.GetId(&defaultID)
-
-		pDefaultDevice.Release()
 
 		if err != nil {
 			return false, err
@@ -152,31 +135,18 @@ func (device *Device) IsDefault(role wca.ERole) (bool, error) {
 	var enumerator *wca.IMMDeviceEnumerator
 	var err error
 
-	err = wca.CoCreateInstance(
-		wca.CLSID_MMDeviceEnumerator,
-		0,
-		wca.CLSCTX_ALL,
-		wca.IID_IMMDeviceEnumerator,
-		&enumerator,
-	)
+	enumerator, err = createDeviceEnumerator()
 
 	if err != nil {
-		enumerator.Release()
 		return false, err
 	}
 
 	defer enumerator.Release()
 
 	var pDefaultDevice *wca.IMMDevice
-
-	err = enumerator.GetDefaultAudioEndpoint(
-		wca.ERender,
-		uint32(role),
-		&pDefaultDevice,
-	)
+	pDefaultDevice, err = getDefaultAudioEndpoint(enumerator, role)
 
 	if err != nil {
-		enumerator.Release()
 		return false, err
 	}
 
@@ -288,25 +258,13 @@ func (device *Device) Release() {
 }
 
 func (device *Device) SetAsDefault() error {
-	var err error
-
-	err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED)
-
-	if err != nil {
-		return err
-	}
-
-	defer ole.CoUninitialize()
+	coInitialize()
+	defer coUninitialize()
 
 	var pcv *policy.IPolicyConfigVista
+	var err error
 
-	err = wca.CoCreateInstance(
-		policy.CLSID_PolicyConfigVista,
-		0,
-		wca.CLSCTX_ALL,
-		policy.IID_IPolicyConfigVista,
-		&pcv,
-	)
+	pcv, err = createPolicyConfigVista()
 
 	if err != nil {
 		return err
@@ -315,35 +273,29 @@ func (device *Device) SetAsDefault() error {
 	var endpoint string
 	device.Endpoint(&endpoint)
 
-	err = pcv.SetDefaultEndpoint(endpoint, wca.EConsole)
-
 	if err != nil {
 		return err
 	}
 
-	err = pcv.SetDefaultEndpoint(endpoint, wca.ECommunications)
+	for _, role := range []wca.ERole{wca.EConsole, wca.ECommunications, wca.EMultimedia} {
+		err = pcv.SetDefaultEndpoint(endpoint, role)
 
-	if err != nil {
-		return err
-	}
-
-	err = pcv.SetDefaultEndpoint(endpoint, wca.EMultimedia)
-
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
 func (device *Device) SetVolume(level int8) error {
-	var err error
-
 	if device.MMDevice == nil || device.Volume == nil {
 		return errors.New("No device or volume")
 	}
 
 	var volume float32 = float32(level) / 100
+	var err error
+
 	err = device.Volume.SetMasterVolumeLevelScalar(volume, nil)
 
 	if err != nil {
@@ -365,4 +317,55 @@ func (device *Device) Unmute() bool {
 	device.Volume.SetMute(false, nil)
 
 	return true
+}
+
+func createDeviceEnumerator() (*wca.IMMDeviceEnumerator, error) {
+	var enumerator *wca.IMMDeviceEnumerator
+	var err error
+
+	err = wca.CoCreateInstance(
+		wca.CLSID_MMDeviceEnumerator,
+		0,
+		wca.CLSCTX_ALL,
+		wca.IID_IMMDeviceEnumerator,
+		&enumerator,
+	)
+
+	return enumerator, err
+}
+
+func getDefaultAudioEndpoint(enumerator *wca.IMMDeviceEnumerator, role wca.ERole) (*wca.IMMDevice, error) {
+	var pDefaultDevice *wca.IMMDevice
+	var err error
+
+	err = enumerator.GetDefaultAudioEndpoint(
+		wca.ERender,
+		uint32(role),
+		&pDefaultDevice,
+	)
+
+	return pDefaultDevice, err
+}
+
+func createPolicyConfigVista() (*policy.IPolicyConfigVista, error) {
+	var pcv *policy.IPolicyConfigVista
+	var err error
+
+	err = wca.CoCreateInstance(
+		policy.CLSID_PolicyConfigVista,
+		0,
+		wca.CLSCTX_ALL,
+		policy.IID_IPolicyConfigVista,
+		&pcv,
+	)
+
+	return pcv, err
+}
+
+func coInitialize() {
+	ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED)
+}
+
+func coUninitialize() {
+	ole.CoUninitialize()
 }

@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 
@@ -15,43 +16,68 @@ type (
 )
 
 func NewSettings() *Settings {
-	var configuration, _ = os.UserConfigDir()
-	var home = filepath.Join(configuration, "mute")
+	var directory, _ = os.UserConfigDir()
+	var home = filepath.Join(directory, "mute")
 	var path = filepath.Join(home, "settings.ini")
 
 	var err error
 
-	err = os.MkdirAll(home, os.ModeDir)
+	err = os.MkdirAll(home, os.ModePerm)
 
 	if err != nil {
+		log.Printf("Unable to create directory: %v", err)
 		return &Settings{}
 	}
 
-	_, err = os.OpenFile(
-		path,
-		os.O_RDWR|os.O_CREATE|os.O_EXCL,
-		0666,
-	)
+	if _, err = os.Stat(path); os.IsNotExist(err) {
+		var file *os.File
+		file, err = os.Create(path)
 
-	file, _ := ini.Load(path)
+		if err != nil {
+			log.Printf("Unable to create file: %v", err)
+			return &Settings{}
+		}
 
-	if err == nil {
-		file.NewSection("capture")
-		file.Section("capture").NewKey("name", "Microphone")
-		// file.Section("capture").NewKey("volume", "70")
+		file.Close()
 
-		file.NewSection("render")
-		file.Section("render").NewKey("name", "Speaker")
-		// file.Section("render").NewKey("volume", "30")
+		var configuration *ini.File
+		configuration = ini.Empty()
+		configuration.NewSection("capture")
+		configuration.Section("capture").NewKey("name", "Microphone")
+		// configuration.Section("capture").NewKey("volume", "70")
 
-		err = file.SaveTo(path)
+		configuration.NewSection("render")
+		configuration.Section("render").NewKey("name", "Speaker")
+		// configuration.Section("render").NewKey("volume", "30")
+
+		err = configuration.SaveTo(path)
+
+		if err != nil {
+			log.Printf("Unable to save settings: %v", err)
+			return &Settings{}
+		}
 	}
 
-	capture := file.Section("capture")
-	cname := capture.Key("name").String()
+	var configuration *ini.File
 
-	render := file.Section("render")
-	rname := render.Key("name").String()
+	configuration, err = ini.Load(path)
+
+	if err != nil {
+		log.Printf("Unable to load settings: %v", err)
+		return &Settings{}
+	}
+
+	var capture *ini.Section
+	capture = configuration.Section("capture")
+
+	var cname string
+	cname = capture.Key("name").String()
+
+	var render *ini.Section
+	render = configuration.Section("render")
+
+	var rname string
+	rname = render.Key("name").String()
 
 	return &Settings{
 		Capture: cname,

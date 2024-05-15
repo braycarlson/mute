@@ -3,8 +3,6 @@ package main
 import (
 	_ "embed"
 	"log"
-	"os"
-	"path/filepath"
 	"unsafe"
 
 	"github.com/JamesHovious/w32"
@@ -34,8 +32,6 @@ type Deafen struct {
 	name     string
 	deafen   []byte
 	undeafen []byte
-	logger   chan string
-	shutdown chan bool
 }
 
 func NewDeafen() *Deafen {
@@ -44,23 +40,6 @@ func NewDeafen() *Deafen {
 		queue:    buffer.NewCircularBuffer(2),
 		deafen:   deafen,
 		undeafen: undeafen,
-		logger:   make(chan string, 1000),
-		shutdown: make(chan bool),
-	}
-}
-
-func (deafen *Deafen) logging() {
-	for {
-		select {
-		case message, ok := <-deafen.logger:
-			if !ok {
-				return
-			}
-
-			log.Println(message)
-		case <-deafen.shutdown:
-			close(deafen.logger)
-		}
 	}
 }
 
@@ -77,34 +56,30 @@ func (deafen *Deafen) listener(identifier int, wparam w32.WPARAM, lparam w32.LPA
 		deafen.queue.Push(key)
 
 		if deafen.queue.IsMatch(deafen.hotkey) {
-			if deafen.render == nil {
-				return 1
-			}
-
-			if deafen.render.IsMuted() {
-				deafen.render.Unmute()
-				systray.SetIcon(deafen.undeafen)
-
-				deafen.logger <- "The device was undeafened."
-			} else {
-				deafen.render.Mute()
-				systray.SetIcon(deafen.deafen)
-
-				deafen.logger <- "The device was deafened."
+			if deafen.render != nil {
+				go deafen.toggleMute()
 			}
 
 			return 1
 		}
 	}
 
-	var result w32.LRESULT = w32.CallNextHookEx(
-		w32.HHOOK(deafen.hook),
+	return w32.CallNextHookEx(
+		0,
 		identifier,
 		wparam,
 		lparam,
 	)
+}
 
-	return result
+func (deafen *Deafen) toggleMute() {
+	if deafen.render.IsMuted() {
+		deafen.render.Unmute()
+		systray.SetIcon(deafen.undeafen)
+	} else {
+		deafen.render.Mute()
+		systray.SetIcon(deafen.deafen)
+	}
 }
 
 func (deafen *Deafen) onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier string) error {
@@ -117,34 +92,28 @@ func (deafen *Deafen) onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ER
 
 	id, err = deafen.render.Id()
 
-	if id == identifier {
-		return nil
+	if err != nil || id == identifier {
+		return err
 	}
-
-	deafen.logger <- "The default device was changed."
 
 	var enabled bool
 	enabled, err = deafen.render.IsEnabled()
 
-	if !enabled {
-		return nil
+	if err == nil && enabled {
+		err = deafen.render.SetAsDefault()
+
+		if err != nil {
+			log.Println(err)
+		}
 	}
 
-	err = deafen.render.SetAsDefault()
-
-	if err != nil {
-		log.Println(err)
-	}
-
-	return nil
+	return err
 }
 
 func (deafen *Deafen) onDeviceAdded(identifier string) error {
-	deafen.logger <- "A device was added."
-
-	var err error
-
 	if deafen.render == nil {
+		var err error
+
 		var render *device.Device
 		render, err = deafen.manager.Find(deafen.name, wca.ERender)
 
@@ -157,14 +126,14 @@ func (deafen *Deafen) onDeviceAdded(identifier string) error {
 				log.Println(err)
 			}
 		}
+
+		return err
 	}
 
-	return err
+	return nil
 }
 
 func (deafen *Deafen) onDeviceRemoved(identifier string) error {
-	deafen.logger <- "A device was removed."
-
 	if deafen.render == nil {
 		return nil
 	}
@@ -174,7 +143,7 @@ func (deafen *Deafen) onDeviceRemoved(identifier string) error {
 
 	id, err = deafen.render.Id()
 
-	if id == identifier {
+	if err == nil && id == identifier {
 		deafen.render.Release()
 		deafen.render = nil
 	}
@@ -187,25 +156,10 @@ func (deafen *Deafen) onDeviceStateChanged(identifier string, state uint64) erro
 		return nil
 	}
 
-	deafen.logger <- "The state of a device was changed."
-
-	switch state {
-	case 1:
-		deafen.logger <- "The audio endpoint device is disabled."
-	case 2:
-		deafen.logger <- "The audio endpoint device is not present."
-	case 3:
-		deafen.logger <- "The audio endpoint device is unplugged."
-	}
-
 	return nil
 }
 
 func (deafen *Deafen) onReady() {
-	go deafen.logging()
-
-	deafen.logger <- "Starting..."
-
 	systray.SetTitle("Deafen")
 	systray.SetTooltip("Deafen")
 
@@ -221,8 +175,6 @@ func (deafen *Deafen) onReady() {
 }
 
 func (deafen *Deafen) onExit() {
-	deafen.logger <- "Exiting..."
-
 	if deafen.render != nil {
 		deafen.render.Release()
 	}
@@ -247,7 +199,6 @@ func (deafen *Deafen) run() {
 	render, err = deafen.manager.Find(settings.Render, wca.ERender)
 
 	if render == nil || err != nil {
-		deafen.logger <- "No render device found"
 		systray.SetIcon(deafen.undeafen)
 	} else {
 		deafen.render = render
@@ -256,7 +207,7 @@ func (deafen *Deafen) run() {
 		var status bool
 		status, err = deafen.render.IsAllDefault()
 
-		if !status {
+		if !status && err == nil {
 			deafen.render.SetAsDefault()
 		}
 
@@ -315,32 +266,6 @@ func (deafen *Deafen) run() {
 }
 
 func main() {
-	var err error
-
-	var configuration, _ = os.UserConfigDir()
-	var home = filepath.Join(configuration, "mute")
-	var path = filepath.Join(home, "deafen.log")
-
-	if err = os.MkdirAll(home, os.ModeDir); err != nil {
-		log.Fatalln(err)
-	}
-
-	var file *os.File
-
-	file, err = os.OpenFile(
-		path,
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND,
-		0666,
-	)
-
-	if err != nil {
-		log.Println(err)
-	}
-
-	log.SetOutput(file)
-
-	defer file.Close()
-
 	var deafen *Deafen = NewDeafen()
 	systray.Run(deafen.onReady, deafen.onExit)
 }

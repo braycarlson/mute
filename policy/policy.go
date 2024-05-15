@@ -33,15 +33,17 @@ type IPolicyConfigVistaVtbl struct {
 }
 
 func (pcv *IPolicyConfigVista) SetDefaultEndpoint(identifier string, role wca.ERole) (err error) {
-	err = pcvSetDefaultEndpoint(pcv, identifier, role)
-	return
+	return pcvSetDefaultEndpoint(pcv, identifier, role)
+
 }
 
 func pcvSetDefaultEndpoint(pcv *IPolicyConfigVista, identifier string, role wca.ERole) (err error) {
 	var ptr *uint16
 
-	if ptr, err = syscall.UTF16PtrFromString(identifier); err != nil {
-		return
+	ptr, err = syscall.UTF16PtrFromString(identifier)
+
+	if err != nil {
+		return err
 	}
 
 	var hresult uintptr
@@ -58,7 +60,7 @@ func pcvSetDefaultEndpoint(pcv *IPolicyConfigVista, identifier string, role wca.
 		err = ole.NewError(hresult)
 	}
 
-	return
+	return nil
 }
 
 func (pcv *IPolicyConfigVista) VTable() *IPolicyConfigVistaVtbl {
