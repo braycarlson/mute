@@ -15,16 +15,22 @@ import (
 	"github.com/moutend/go-wca/pkg/wca"
 )
 
+/*
+#cgo LDFLAGS: -Ldll -lhook
+#include "dll/hook.h"
+*/
+import "C"
+
 var (
 	//go:embed asset/mute.ico
-	mute []byte
+	muteIcon []byte
 
 	//go:embed asset/unmute.ico
-	unmute []byte
+	unmuteIcon []byte
+	app        *Mute
 )
 
 type Mute struct {
-	hook    w32.HHOOK
 	queue   *buffer.CircularBuffer
 	hotkey  []byte
 	capture *device.Device
@@ -38,69 +44,66 @@ func NewMute() *Mute {
 	return &Mute{
 		hotkey: []byte{33},
 		queue:  buffer.NewCircularBuffer(2),
-		mute:   mute,
-		unmute: unmute,
+		mute:   muteIcon,
+		unmute: unmuteIcon,
 	}
 }
 
-func (mute *Mute) listener(identifier int, wparam w32.WPARAM, lparam w32.LPARAM) w32.LRESULT {
-	switch wparam {
-	case
-		w32.WPARAM(w32.WM_KEYDOWN),
-		w32.WPARAM(w32.WM_SYSKEYDOWN):
+//export GoKeyboardProc
+func GoKeyboardProc(nCode C.int, wParam C.WPARAM, lParam C.LPARAM) C.LRESULT {
+	if nCode >= 0 {
+		if wParam == C.WPARAM(w32.WM_KEYDOWN) || wParam == C.WPARAM(w32.WM_SYSKEYDOWN) {
+			var message unsafe.Pointer = unsafe.Pointer(uintptr(lParam))
+			var kbdstruct *w32.KBDLLHOOKSTRUCT = (*w32.KBDLLHOOKSTRUCT)(message)
 
-		var message unsafe.Pointer = unsafe.Pointer(lparam)
-		var kbdstruct *w32.KBDLLHOOKSTRUCT = (*w32.KBDLLHOOKSTRUCT)(message)
+			var key byte = byte(kbdstruct.VkCode)
+			app.queue.Push(key)
 
-		var key byte = byte(kbdstruct.VkCode)
-		mute.queue.Push(key)
-
-		if mute.queue.IsMatch(mute.hotkey) {
-			if mute.capture != nil {
-				go mute.toggleMute()
+			if app.queue.IsMatch(app.hotkey) {
+				if app.capture != nil {
+					go app.toggleMute()
+				}
+				return 1
 			}
-
-			return 1
 		}
 	}
-
-	return w32.CallNextHookEx(
-		0,
-		identifier,
-		wparam,
-		lparam,
-	)
+	return C.callNextHookEx(nCode, wParam, lParam)
 }
 
-func (mute *Mute) toggleMute() {
-	if mute.capture.IsMuted() {
-		mute.capture.Unmute()
-		systray.SetIcon(mute.unmute)
+//export GoMouseProc
+func GoMouseProc(nCode C.int, wParam C.WPARAM, lParam C.LPARAM) C.LRESULT {
+	return C.callNextHookEx(nCode, wParam, lParam)
+}
+
+func (app *Mute) toggleMute() {
+	if app.capture.IsMuted() {
+		app.capture.Unmute()
+		systray.SetIcon(app.unmute)
 	} else {
-		mute.capture.Mute()
-		systray.SetIcon(mute.mute)
+		app.capture.Mute()
+		systray.SetIcon(app.mute)
 	}
 }
 
-func (mute *Mute) onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier string) error {
-	if mute.capture == nil || dataflow == wca.ERender {
+func (app *Mute) onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier string) error {
+	if app.capture == nil || dataflow == wca.ERender {
 		return nil
 	}
 
 	var id string
 	var err error
 
-	id, err = mute.capture.Id()
+	id, err = app.capture.Id()
 
 	if err != nil || id == identifier {
 		return nil
 	}
 
 	var enabled bool
-	enabled, err = mute.capture.IsEnabled()
+	enabled, err = app.capture.IsEnabled()
 
 	if err == nil && enabled {
-		err = mute.capture.SetAsDefault()
+		err = app.capture.SetAsDefault()
 
 		if err != nil {
 			log.Println(err)
@@ -110,17 +113,17 @@ func (mute *Mute) onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole,
 	return err
 }
 
-func (mute *Mute) onDeviceAdded(identifier string) error {
-	if mute.capture == nil {
+func (app *Mute) onDeviceAdded(identifier string) error {
+	if app.capture == nil {
 		var err error
 
 		var capture *device.Device
-		capture, err = mute.manager.Find(mute.name, wca.ECapture)
+		capture, err = app.manager.Find(app.name, wca.ECapture)
 
 		if err == nil {
-			mute.capture = capture
+			app.capture = capture
 
-			err = mute.capture.SetAsDefault()
+			err = app.capture.SetAsDefault()
 
 			if err != nil {
 				log.Println(err)
@@ -133,33 +136,33 @@ func (mute *Mute) onDeviceAdded(identifier string) error {
 	return nil
 }
 
-func (mute *Mute) onDeviceRemoved(identifier string) error {
-	if mute.capture == nil {
+func (app *Mute) onDeviceRemoved(identifier string) error {
+	if app.capture == nil {
 		return nil
 	}
 
 	var id string
 	var err error
 
-	id, err = mute.capture.Id()
+	id, err = app.capture.Id()
 
 	if id == identifier {
-		mute.capture.Release()
-		mute.capture = nil
+		app.capture.Release()
+		app.capture = nil
 	}
 
 	return err
 }
 
-func (mute *Mute) onDeviceStateChanged(identifier string, state uint64) error {
-	if mute.capture == nil || state == 0 {
+func (app *Mute) onDeviceStateChanged(identifier string, state uint64) error {
+	if app.capture == nil || state == 0 {
 		return nil
 	}
 
 	return nil
 }
 
-func (mute *Mute) onReady() {
+func (app *Mute) onReady() {
 	systray.SetTitle("Mute")
 	systray.SetTooltip("Mute")
 
@@ -171,18 +174,18 @@ func (mute *Mute) onReady() {
 		systray.Quit()
 	}()
 
-	mute.run()
+	app.run()
 }
 
-func (mute *Mute) onExit() {
-	if mute.capture != nil {
-		mute.capture.Release()
+func (app *Mute) onExit() {
+	if app.capture != nil {
+		app.capture.Release()
 	}
 
-	w32.UnhookWindowsHookEx(mute.hook)
+	C.removeHook()
 }
 
-func (mute *Mute) run() {
+func (app *Mute) run() {
 	var err error
 
 	err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED)
@@ -196,25 +199,25 @@ func (mute *Mute) run() {
 	var capture *device.Device
 	var settings *settings.Settings = settings.NewSettings()
 
-	capture, err = mute.manager.Find(settings.Capture, wca.ECapture)
+	capture, err = app.manager.Find(settings.Capture, wca.ECapture)
 
 	if capture == nil || err != nil {
-		systray.SetIcon(mute.unmute)
+		systray.SetIcon(app.unmute)
 	} else {
-		mute.capture = capture
-		mute.capture.SetVolume(70)
+		app.capture = capture
+		app.capture.SetVolume(70)
 
 		var status bool
-		status, err = mute.capture.IsAllDefault()
+		status, err = app.capture.IsAllDefault()
 
 		if !status && err == nil {
-			mute.capture.SetAsDefault()
+			app.capture.SetAsDefault()
 		}
 
-		if mute.capture.IsMuted() {
-			systray.SetIcon(mute.mute)
+		if app.capture.IsMuted() {
+			systray.SetIcon(app.mute)
 		} else {
-			systray.SetIcon(mute.unmute)
+			systray.SetIcon(app.unmute)
 		}
 	}
 
@@ -233,10 +236,10 @@ func (mute *Mute) run() {
 	}
 
 	var callback wca.IMMNotificationClientCallback = wca.IMMNotificationClientCallback{
-		OnDefaultDeviceChanged: mute.onDefaultDeviceChanged,
-		OnDeviceAdded:          mute.onDeviceAdded,
-		OnDeviceRemoved:        mute.onDeviceRemoved,
-		OnDeviceStateChanged:   mute.onDeviceStateChanged,
+		OnDefaultDeviceChanged: app.onDefaultDeviceChanged,
+		OnDeviceAdded:          app.onDeviceAdded,
+		OnDeviceRemoved:        app.onDeviceRemoved,
+		OnDeviceStateChanged:   app.onDeviceStateChanged,
 	}
 
 	var mmnc *wca.IMMNotificationClient = wca.NewIMMNotificationClient(callback)
@@ -250,22 +253,26 @@ func (mute *Mute) run() {
 	defer mmde.UnregisterEndpointNotificationCallback(mmnc)
 	defer mmde.Release()
 
-	mute.hook = w32.SetWindowsHookEx(
-		w32.WH_KEYBOARD_LL,
-		w32.HOOKPROC(mute.listener),
-		0,
-		0,
-	)
+	C.setGoKeyboardProc(C.HOOKPROC(C.GoKeyboardProc))
+	C.setGoMouseProc(C.HOOKPROC(C.GoMouseProc))
+	C.setKeyboardHook(C.getModuleHandle())
 
 	var message w32.MSG
 
-	for w32.GetMessage(&message, 0, 0, 0) != 0 {
+	for {
+		var status int
+		status = w32.GetMessage(&message, 0, 0, 0)
+
+		if status == 0 || status == -1 {
+			break
+		}
+
 		w32.TranslateMessage(&message)
 		w32.DispatchMessage(&message)
 	}
 }
 
 func main() {
-	var mute *Mute = NewMute()
-	systray.Run(mute.onReady, mute.onExit)
+	app = NewMute()
+	systray.Run(app.onReady, app.onExit)
 }

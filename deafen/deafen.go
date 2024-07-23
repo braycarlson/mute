@@ -15,16 +15,22 @@ import (
 	"github.com/moutend/go-wca/pkg/wca"
 )
 
+/*
+#cgo LDFLAGS: -Ldll -lhook
+#include "dll/hook.h"
+*/
+import "C"
+
 var (
 	//go:embed asset/deafen.ico
-	deafen []byte
+	deafenIcon []byte
 
 	//go:embed asset/undeafen.ico
-	undeafen []byte
+	undeafenIcon []byte
+	app          *Deafen
 )
 
 type Deafen struct {
-	hook     w32.HHOOK
 	queue    *buffer.CircularBuffer
 	hotkey   []byte
 	manager  *manager.AudioManager
@@ -38,69 +44,66 @@ func NewDeafen() *Deafen {
 	return &Deafen{
 		hotkey:   []byte{34},
 		queue:    buffer.NewCircularBuffer(2),
-		deafen:   deafen,
-		undeafen: undeafen,
+		deafen:   deafenIcon,
+		undeafen: undeafenIcon,
 	}
 }
 
-func (deafen *Deafen) listener(identifier int, wparam w32.WPARAM, lparam w32.LPARAM) w32.LRESULT {
-	switch wparam {
-	case
-		w32.WPARAM(w32.WM_KEYDOWN),
-		w32.WPARAM(w32.WM_SYSKEYDOWN):
+//export GoKeyboardProc
+func GoKeyboardProc(nCode C.int, wParam C.WPARAM, lParam C.LPARAM) C.LRESULT {
+	if nCode >= 0 {
+		if wParam == C.WPARAM(w32.WM_KEYDOWN) || wParam == C.WPARAM(w32.WM_SYSKEYDOWN) {
+			var message unsafe.Pointer = unsafe.Pointer(uintptr(lParam))
+			var kbdstruct *w32.KBDLLHOOKSTRUCT = (*w32.KBDLLHOOKSTRUCT)(message)
 
-		var message unsafe.Pointer = unsafe.Pointer(lparam)
-		var kbdstruct *w32.KBDLLHOOKSTRUCT = (*w32.KBDLLHOOKSTRUCT)(message)
+			var key byte = byte(kbdstruct.VkCode)
+			app.queue.Push(key)
 
-		var key byte = byte(kbdstruct.VkCode)
-		deafen.queue.Push(key)
-
-		if deafen.queue.IsMatch(deafen.hotkey) {
-			if deafen.render != nil {
-				go deafen.toggleMute()
+			if app.queue.IsMatch(app.hotkey) {
+				if app.render != nil {
+					go app.toggleMute()
+				}
+				return 1
 			}
-
-			return 1
 		}
 	}
-
-	return w32.CallNextHookEx(
-		0,
-		identifier,
-		wparam,
-		lparam,
-	)
+	return C.callNextHookEx(nCode, wParam, lParam)
 }
 
-func (deafen *Deafen) toggleMute() {
-	if deafen.render.IsMuted() {
-		deafen.render.Unmute()
-		systray.SetIcon(deafen.undeafen)
+//export GoMouseProc
+func GoMouseProc(nCode C.int, wParam C.WPARAM, lParam C.LPARAM) C.LRESULT {
+	return C.callNextHookEx(nCode, wParam, lParam)
+}
+
+func (app *Deafen) toggleMute() {
+	if app.render.IsMuted() {
+		app.render.Unmute()
+		systray.SetIcon(app.undeafen)
 	} else {
-		deafen.render.Mute()
-		systray.SetIcon(deafen.deafen)
+		app.render.Mute()
+		systray.SetIcon(app.deafen)
 	}
 }
 
-func (deafen *Deafen) onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier string) error {
-	if deafen.render == nil || dataflow == wca.ECapture {
+func (app *Deafen) onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ERole, identifier string) error {
+	if app.render == nil || dataflow == wca.ECapture {
 		return nil
 	}
 
 	var id string
 	var err error
 
-	id, err = deafen.render.Id()
+	id, err = app.render.Id()
 
 	if err != nil || id == identifier {
 		return err
 	}
 
 	var enabled bool
-	enabled, err = deafen.render.IsEnabled()
+	enabled, err = app.render.IsEnabled()
 
 	if err == nil && enabled {
-		err = deafen.render.SetAsDefault()
+		err = app.render.SetAsDefault()
 
 		if err != nil {
 			log.Println(err)
@@ -110,17 +113,17 @@ func (deafen *Deafen) onDefaultDeviceChanged(dataflow wca.EDataFlow, role wca.ER
 	return err
 }
 
-func (deafen *Deafen) onDeviceAdded(identifier string) error {
-	if deafen.render == nil {
+func (app *Deafen) onDeviceAdded(identifier string) error {
+	if app.render == nil {
 		var err error
 
 		var render *device.Device
-		render, err = deafen.manager.Find(deafen.name, wca.ERender)
+		render, err = app.manager.Find(app.name, wca.ERender)
 
 		if err == nil {
-			deafen.render = render
+			app.render = render
 
-			err = deafen.render.SetAsDefault()
+			err = app.render.SetAsDefault()
 
 			if err != nil {
 				log.Println(err)
@@ -133,33 +136,33 @@ func (deafen *Deafen) onDeviceAdded(identifier string) error {
 	return nil
 }
 
-func (deafen *Deafen) onDeviceRemoved(identifier string) error {
-	if deafen.render == nil {
+func (app *Deafen) onDeviceRemoved(identifier string) error {
+	if app.render == nil {
 		return nil
 	}
 
 	var id string
 	var err error
 
-	id, err = deafen.render.Id()
+	id, err = app.render.Id()
 
 	if err == nil && id == identifier {
-		deafen.render.Release()
-		deafen.render = nil
+		app.render.Release()
+		app.render = nil
 	}
 
 	return err
 }
 
-func (deafen *Deafen) onDeviceStateChanged(identifier string, state uint64) error {
-	if deafen.render == nil || state == 0 {
+func (app *Deafen) onDeviceStateChanged(identifier string, state uint64) error {
+	if app.render == nil || state == 0 {
 		return nil
 	}
 
 	return nil
 }
 
-func (deafen *Deafen) onReady() {
+func (app *Deafen) onReady() {
 	systray.SetTitle("Deafen")
 	systray.SetTooltip("Deafen")
 
@@ -171,18 +174,18 @@ func (deafen *Deafen) onReady() {
 		systray.Quit()
 	}()
 
-	deafen.run()
+	app.run()
 }
 
-func (deafen *Deafen) onExit() {
-	if deafen.render != nil {
-		deafen.render.Release()
+func (app *Deafen) onExit() {
+	if app.render != nil {
+		app.render.Release()
 	}
 
-	w32.UnhookWindowsHookEx(deafen.hook)
+	C.removeHook()
 }
 
-func (deafen *Deafen) run() {
+func (app *Deafen) run() {
 	var err error
 
 	err = ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED)
@@ -196,25 +199,25 @@ func (deafen *Deafen) run() {
 	var render *device.Device
 	var settings *settings.Settings = settings.NewSettings()
 
-	render, err = deafen.manager.Find(settings.Render, wca.ERender)
+	render, err = app.manager.Find(settings.Render, wca.ERender)
 
 	if render == nil || err != nil {
-		systray.SetIcon(deafen.undeafen)
+		systray.SetIcon(app.undeafen)
 	} else {
-		deafen.render = render
-		deafen.render.SetVolume(30)
+		app.render = render
+		app.render.SetVolume(20)
 
 		var status bool
-		status, err = deafen.render.IsAllDefault()
+		status, err = app.render.IsAllDefault()
 
 		if !status && err == nil {
-			deafen.render.SetAsDefault()
+			app.render.SetAsDefault()
 		}
 
-		if deafen.render.IsMuted() {
-			systray.SetIcon(deafen.deafen)
+		if app.render.IsMuted() {
+			systray.SetIcon(app.deafen)
 		} else {
-			systray.SetIcon(deafen.undeafen)
+			systray.SetIcon(app.undeafen)
 		}
 	}
 
@@ -233,10 +236,10 @@ func (deafen *Deafen) run() {
 	}
 
 	var callback wca.IMMNotificationClientCallback = wca.IMMNotificationClientCallback{
-		OnDefaultDeviceChanged: deafen.onDefaultDeviceChanged,
-		OnDeviceAdded:          deafen.onDeviceAdded,
-		OnDeviceRemoved:        deafen.onDeviceRemoved,
-		OnDeviceStateChanged:   deafen.onDeviceStateChanged,
+		OnDefaultDeviceChanged: app.onDefaultDeviceChanged,
+		OnDeviceAdded:          app.onDeviceAdded,
+		OnDeviceRemoved:        app.onDeviceRemoved,
+		OnDeviceStateChanged:   app.onDeviceStateChanged,
 	}
 
 	var mmnc *wca.IMMNotificationClient = wca.NewIMMNotificationClient(callback)
@@ -250,22 +253,26 @@ func (deafen *Deafen) run() {
 	defer mmde.UnregisterEndpointNotificationCallback(mmnc)
 	defer mmde.Release()
 
-	deafen.hook = w32.SetWindowsHookEx(
-		w32.WH_KEYBOARD_LL,
-		w32.HOOKPROC(deafen.listener),
-		0,
-		0,
-	)
+	C.setGoKeyboardProc(C.HOOKPROC(C.GoKeyboardProc))
+	C.setGoMouseProc(C.HOOKPROC(C.GoMouseProc))
+	C.setKeyboardHook(C.getModuleHandle())
 
 	var message w32.MSG
 
-	for w32.GetMessage(&message, 0, 0, 0) != 0 {
+	for {
+		var status int
+		status = w32.GetMessage(&message, 0, 0, 0)
+
+		if status == 0 || status == -1 {
+			break
+		}
+
 		w32.TranslateMessage(&message)
 		w32.DispatchMessage(&message)
 	}
 }
 
 func main() {
-	var deafen *Deafen = NewDeafen()
-	systray.Run(deafen.onReady, deafen.onExit)
+	app = NewDeafen()
+	systray.Run(app.onReady, app.onExit)
 }
