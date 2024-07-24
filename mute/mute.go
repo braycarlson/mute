@@ -16,8 +16,9 @@ import (
 )
 
 /*
-#cgo LDFLAGS: -Ldll -lhook
-#include "dll/hook.h"
+#cgo CFLAGS: -I${SRCDIR}/../dll
+#cgo LDFLAGS: -L${SRCDIR}/../dll -lhook
+#include "../dll/hook.h"
 */
 import "C"
 
