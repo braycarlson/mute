@@ -1,0 +1,64 @@
+name: Build Executable for Release
+on:
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Get Version from Release Tag
+        id: version
+        shell: bash
+        run: |
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+
+      - name: Build Zig Executable
+        shell: bash
+        run: |
+          mkdir -p output
+          zig build -Dtarget=x86_64-windows -Doptimize=ReleaseSmall
+          cp zig-out/bin/mute.exe output/mute.exe
+          cp zig-out/bin/deafen.exe output/deafen.exe
+
+      - name: Verify Executables Exist
+        shell: bash
+        run: |
+          for FILE in output/mute.exe output/deafen.exe; do
+            if [ -f "$FILE" ]; then
+              echo "Executable exists: $FILE"
+            else
+              echo "Executable not found: $FILE"
+              exit 1
+            fi
+          done
+
+      - name: Upload Executables as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: executable-windows
+          path: |
+            output/mute.exe
+            output/deafen.exe
+          retention-days: 1
+
+      - name: Upload Executables to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            output/mute.exe
+            output/deafen.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

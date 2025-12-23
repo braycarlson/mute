@@ -1,0 +1,7 @@
+#define MUTE_ICON    101
+#define UNMUTE_ICON  102
+#define APP_ICON     1
+
+MUTE_ICON ICON "asset/mute.ico"
+UNMUTE_ICON ICON "asset/unmute.ico"
+APP_ICON ICON "asset/unmute.ico"

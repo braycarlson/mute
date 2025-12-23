@@ -1,16 +1,12 @@
 # mute
-deafen/asset/*.ico
-deafen/asset/*.png
-deafen/asset/*.wav
-mute/asset/*.ico
-mute/asset/*.png
-mute/asset/*.wav
-
+.zig-cache/
+zig-out/
 
 # Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
+*.res
 *.so
 *.dylib
 
