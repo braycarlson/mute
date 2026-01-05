@@ -4,8 +4,11 @@ pub fn build(builder: *std.Build) void {
     const target = builder.standardTargetOptions(.{});
     const optimize = builder.standardOptimizeOption(.{});
 
-    const toolkit = builder.dependency("toolkit", .{});
-    const toolkit_module = toolkit.module("toolkit");
+    const nimble = builder.dependency("nimble", .{});
+    const nimble_module = nimble.module("nimble");
+
+    const wisp = builder.dependency("wisp", .{});
+    const wisp_module = wisp.module("wisp");
 
     const win32 = builder.dependency("zigwin32", .{});
     const win32_module = win32.module("win32");
@@ -40,9 +43,10 @@ pub fn build(builder: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "toolkit", .module = toolkit_module },
-                .{ .name = "win32", .module = win32_module },
+                .{ .name = "nimble", .module = nimble_module },
                 .{ .name = "wca", .module = wca_module },
+                .{ .name = "win32", .module = win32_module },
+                .{ .name = "wisp", .module = wisp_module },
             },
         }),
     });
@@ -53,6 +57,8 @@ pub fn build(builder: *std.Build) void {
     mute.linkLibC();
     mute.linkSystemLibrary("user32");
     mute.linkSystemLibrary("gdi32");
+    mute.linkSystemLibrary("gdiplus");
+    mute.linkSystemLibrary("msimg32");
     mute.linkSystemLibrary("shell32");
     mute.linkSystemLibrary("ole32");
 
@@ -67,9 +73,10 @@ pub fn build(builder: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "toolkit", .module = toolkit_module },
-                .{ .name = "win32", .module = win32_module },
+                .{ .name = "nimble", .module = nimble_module },
                 .{ .name = "wca", .module = wca_module },
+                .{ .name = "win32", .module = win32_module },
+                .{ .name = "wisp", .module = wisp_module },
             },
         }),
     });
@@ -80,6 +87,8 @@ pub fn build(builder: *std.Build) void {
     deafen.linkLibC();
     deafen.linkSystemLibrary("user32");
     deafen.linkSystemLibrary("gdi32");
+    deafen.linkSystemLibrary("gdiplus");
+    deafen.linkSystemLibrary("msimg32");
     deafen.linkSystemLibrary("shell32");
     deafen.linkSystemLibrary("ole32");
 

@@ -1,15 +1,16 @@
 const std = @import("std");
 
-pub const RotationPolicy = union(enum) {
-    both: usize,
-    daily: void,
-    size: usize,
+pub const Config = struct {
+    path: []const u8,
+    size: usize = 5 * 1024 * 1024,
 };
 
 pub const Logger = struct {
-    const backup_max: u32 = 5;
+    const backup_count_max: u32 = 5;
     const buffer_size: u32 = 4096;
-    const path_max: u32 = 512;
+    const path_len_max: u32 = 512;
+    const path_with_suffix_len_max: u32 = path_len_max + 8;
+    const timestamp_buffer_size: u32 = 32;
 
     const Date = struct {
         day: u5,
@@ -26,263 +27,255 @@ pub const Logger = struct {
     current_size: u32 = 0,
     file: ?std.fs.File = null,
     last_date: ?Date = null,
+    max_size: usize = 5 * 1024 * 1024,
     mutex: std.Thread.Mutex = .{},
-    path: [path_max]u8 = [_]u8{0} ** path_max,
+    path: [path_len_max]u8 = [_]u8{0} ** path_len_max,
     path_len: u32 = 0,
-    policy: RotationPolicy,
-    write_error: u32 = 0,
+    write_error_count: u32 = 0,
 
-    pub fn init(path: []const u8, policy: RotationPolicy) !Logger {
-        const length: u32 = @intCast(path.len);
+    pub fn init(cfg: Config) !Logger {
+        std.debug.assert(cfg.path.len > 0);
+        std.debug.assert(cfg.path.len <= path_len_max);
 
-        if (length == 0 or length > path_max) {
+        const length: u32 = @intCast(cfg.path.len);
+
+        if (length == 0 or length > path_len_max) {
             return error.InvalidPath;
         }
 
-        std.debug.assert(length > 0);
-        std.debug.assert(length <= path_max);
+        var self = Logger{
+            .max_size = cfg.size,
+        };
 
-        var self = Logger{ .policy = policy };
-
-        @memcpy(self.path[0..length], path);
+        @memcpy(self.path[0..length], cfg.path);
         self.path_len = length;
 
         std.debug.assert(self.path_len == length);
+        std.debug.assert(self.path_len > 0);
 
-        try self.openFile();
-
-        std.debug.assert(self.file != null);
+        try self.open_file();
 
         return self;
     }
 
     pub fn deinit(self: *Logger) void {
+        std.debug.assert(self.path_len <= path_len_max);
+
         if (self.file) |file| {
             file.close();
             self.file = null;
         }
-
-        std.debug.assert(self.file == null);
     }
 
-    fn ensureFileReady(self: *Logger) bool {
-        if (self.shouldRotate()) {
+    pub fn log(self: *Logger, comptime format: []const u8, args: anytype) void {
+        std.debug.assert(self.path_len > 0);
+        std.debug.assert(self.path_len <= path_len_max);
+
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (!self.ensure_file_ready()) {
+            return;
+        }
+
+        var buffer: [buffer_size]u8 = undefined;
+
+        const slice = self.format_message(&buffer, format, args) orelse return;
+
+        std.debug.assert(slice.len > 0);
+        std.debug.assert(slice.len <= buffer_size);
+
+        self.write_to_file(slice);
+    }
+
+    fn ensure_file_ready(self: *Logger) bool {
+        std.debug.assert(self.path_len > 0);
+        std.debug.assert(self.path_len <= path_len_max);
+
+        if (self.should_rotate()) {
             self.rotate() catch {
-                self.write_error += 1;
+                self.write_error_count += 1;
                 return false;
             };
         }
 
         if (self.file == null) {
-            self.write_error += 1;
+            self.write_error_count += 1;
             return false;
         }
 
         return true;
     }
 
-    fn formatMessage(
+    fn format_message(
         self: *Logger,
         buffer: *[buffer_size]u8,
-        comptime fmt: []const u8,
+        comptime format: []const u8,
         args: anytype,
-    ) ?[]const u8 {
-        var fbs = std.io.fixedBufferStream(buffer);
-        const writer = fbs.writer();
+    ) ?[]u8 {
+        _ = self;
 
-        self.writeTimestamp(writer) catch {
-            self.write_error += 1;
-            return null;
-        };
+        const timestamp = get_timestamp() catch return null;
 
-        writer.print(fmt ++ "\n", args) catch {
-            self.write_error += 1;
-            return null;
-        };
+        var stream = std.io.fixedBufferStream(buffer);
+        const writer = stream.writer();
 
-        const result = fbs.getWritten();
+        writer.print("{s} ", .{timestamp}) catch return null;
+        writer.print(format, args) catch return null;
+        writer.writeByte('\n') catch return null;
 
+        const result = stream.getWritten();
+
+        std.debug.assert(result.len > 0);
         std.debug.assert(result.len <= buffer_size);
 
         return result;
     }
 
-    fn getCurrentDate(self: *Logger) Date {
+    fn write_to_file(self: *Logger, data: []const u8) void {
+        std.debug.assert(data.len > 0);
+        std.debug.assert(data.len <= buffer_size);
+
+        const file = self.file orelse return;
+
+        file.writeAll(data) catch {
+            self.write_error_count += 1;
+            return;
+        };
+
+        self.current_size += @intCast(data.len);
+    }
+
+    fn should_rotate(self: *Logger) bool {
+        const today = get_current_date() catch return false;
+
+        if (self.last_date) |last| {
+            if (!last.eql(today)) {
+                return true;
+            }
+        }
+
+        if (self.current_size >= self.max_size) {
+            return true;
+        }
+
+        return false;
+    }
+
+    fn rotate(self: *Logger) !void {
+        std.debug.assert(self.path_len > 0);
+        std.debug.assert(self.path_len <= path_len_max);
+
+        if (self.file) |file| {
+            file.close();
+            self.file = null;
+        }
+
+        try self.rotate_backups();
+        try self.open_file();
+    }
+
+    fn rotate_backups(self: *Logger) !void {
+        std.debug.assert(self.path_len > 0);
+        std.debug.assert(self.path_len <= path_len_max);
+
+        const path = self.path[0..self.path_len];
+
+        var i: u32 = backup_count_max;
+        while (i > 0) : (i -= 1) {
+            std.debug.assert(i <= backup_count_max);
+            std.debug.assert(i > 0);
+
+            var old_path: [path_with_suffix_len_max]u8 = undefined;
+            var new_path: [path_with_suffix_len_max]u8 = undefined;
+
+            const old_len = if (i == 1)
+                std.fmt.bufPrint(&old_path, "{s}", .{path}) catch continue
+            else
+                std.fmt.bufPrint(&old_path, "{s}.{d}", .{ path, i - 1 }) catch continue;
+
+            const new_len = std.fmt.bufPrint(&new_path, "{s}.{d}", .{ path, i }) catch continue;
+
+            std.fs.renameAbsolute(old_path[0..old_len.len], new_path[0..new_len.len]) catch {};
+        }
+
+        std.debug.assert(i == 0);
+    }
+
+    fn open_file(self: *Logger) !void {
+        std.debug.assert(self.path_len > 0);
+        std.debug.assert(self.path_len <= path_len_max);
+
+        const path = self.path[0..self.path_len];
+
+        self.ensure_directory(path);
+
+        self.file = std.fs.createFileAbsolute(path, .{
+            .truncate = false,
+        }) catch |err| {
+            return err;
+        };
+
+        if (self.file) |file| {
+            const stat = file.stat() catch {
+                self.current_size = 0;
+                return;
+            };
+
+            self.current_size = @intCast(stat.size);
+
+            file.seekFromEnd(0) catch {};
+        }
+
+        self.last_date = get_current_date() catch null;
+    }
+
+    fn ensure_directory(self: *Logger, path: []const u8) void {
         _ = self;
 
+        std.debug.assert(path.len > 0);
+        std.debug.assert(path.len <= path_len_max);
+
+        const dir = std.fs.path.dirname(path) orelse return;
+
+        std.fs.makeDirAbsolute(dir) catch {};
+    }
+
+    fn get_current_date() !Date {
         const timestamp = std.time.timestamp();
-
-        std.debug.assert(timestamp >= 0);
-
-        const datetime = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };
-        const day = datetime.getEpochDay();
+        const epoch = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };
+        const day = epoch.getEpochDay();
         const year_day = day.calculateYearDay();
         const month_day = year_day.calculateMonthDay();
 
         return Date{
             .year = year_day.year,
             .month = month_day.month.numeric(),
-            .day = month_day.day_index + 1,
+            .day = @intCast(month_day.day_index + 1),
         };
     }
 
-    fn getPathSlice(self: *Logger) []const u8 {
-        std.debug.assert(self.path_len <= path_max);
-
-        return self.path[0..self.path_len];
-    }
-
-    fn hasDateChanged(self: *Logger) bool {
-        const current = self.getCurrentDate();
-        const last = self.last_date orelse return false;
-
-        return !current.eql(last);
-    }
-
-    fn openFile(self: *Logger) !void {
-        std.debug.assert(self.path_len > 0);
-        std.debug.assert(self.path_len <= path_max);
-
-        const path = self.getPathSlice();
-        const directory = std.fs.path.dirname(path) orelse return error.InvalidPath;
-
-        std.fs.makeDirAbsolute(directory) catch |err| {
-            if (err != error.PathAlreadyExists) {
-                return err;
-            }
-        };
-
-        self.file = try std.fs.createFileAbsolute(path, .{ .read = true, .truncate = false });
-
-        std.debug.assert(self.file != null);
-
-        const stat = try self.file.?.stat();
-        self.current_size = @intCast(stat.size);
-
-        try self.file.?.seekFromEnd(0);
-
-        self.last_date = self.getCurrentDate();
-    }
-
-    fn rotate(self: *Logger) !void {
-        if (self.file) |file| {
-            file.close();
-            self.file = null;
-        }
-
-        try self.rotateFile();
-        try self.openFile();
-
-        self.current_size = 0;
-        self.last_date = self.getCurrentDate();
-
-        std.debug.assert(self.file != null);
-        std.debug.assert(self.current_size == 0);
-    }
-
-    fn rotateFile(self: *Logger) !void {
-        std.debug.assert(self.path_len > 0);
-        std.debug.assert(self.path_len <= path_max);
-
-        const path = self.getPathSlice();
-
-        var old_path_buf: [path_max + 8]u8 = undefined;
-        var new_path_buf: [path_max + 8]u8 = undefined;
-
-        var i: u32 = backup_max;
-
-        while (i > 0) : (i -= 1) {
-            std.debug.assert(i <= backup_max);
-
-            const old_path = if (i == 1)
-                path
-            else
-                std.fmt.bufPrint(&old_path_buf, "{s}.{d}", .{ path, i - 1 }) catch continue;
-
-            const new_path = std.fmt.bufPrint(&new_path_buf, "{s}.{d}", .{ path, i }) catch continue;
-
-            if (i == backup_max) {
-                std.fs.deleteFileAbsolute(new_path) catch {};
-            }
-
-            std.fs.renameAbsolute(old_path, new_path) catch {};
-        }
-    }
-
-    fn shouldRotate(self: *Logger) bool {
-        switch (self.policy) {
-            .size => |max_size| {
-                std.debug.assert(max_size > 0);
-                return self.current_size >= max_size;
-            },
-            .daily => return self.hasDateChanged(),
-            .both => |max_size| {
-                std.debug.assert(max_size > 0);
-                return self.current_size >= max_size or self.hasDateChanged();
-            },
-        }
-    }
-
-    fn writeTimestamp(self: *Logger, writer: anytype) !void {
-        _ = self;
-
+    fn get_timestamp() ![]const u8 {
         const timestamp = std.time.timestamp();
-
-        std.debug.assert(timestamp >= 0);
-
-        const datetime = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };
-        const day = datetime.getEpochDay();
+        const epoch = std.time.epoch.EpochSeconds{ .secs = @intCast(timestamp) };
+        const day = epoch.getEpochDay();
         const year_day = day.calculateYearDay();
         const month_day = year_day.calculateMonthDay();
-        const day_seconds = datetime.getDaySeconds();
+        const day_seconds = epoch.getDaySeconds();
 
-        try writer.print("[{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}] ", .{
+        const State = struct {
+            var buffer: [timestamp_buffer_size]u8 = undefined;
+        };
+
+        const result = std.fmt.bufPrint(&State.buffer, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
             year_day.year,
             month_day.month.numeric(),
             month_day.day_index + 1,
             day_seconds.getHoursIntoDay(),
             day_seconds.getMinutesIntoHour(),
             day_seconds.getSecondsIntoMinute(),
-        });
-    }
+        }) catch return error.FormatFailed;
 
-    fn writeToFile(self: *Logger, written: []const u8) void {
-        std.debug.assert(written.len > 0);
-        std.debug.assert(written.len <= buffer_size);
-
-        const file = self.file orelse return;
-        const length: u32 = @intCast(written.len);
-
-        const count = file.write(written) catch {
-            self.write_error += 1;
-            return;
-        };
-
-        if (count != written.len) {
-            self.write_error += 1;
-        }
-
-        file.sync() catch {
-            self.write_error += 1;
-        };
-
-        self.current_size += length;
-    }
-
-    pub fn log(self: *Logger, comptime fmt: []const u8, args: anytype) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        if (!self.ensureFileReady()) {
-            return;
-        }
-
-        var buffer: [buffer_size]u8 = undefined;
-
-        const written = self.formatMessage(&buffer, fmt, args) orelse return;
-
-        std.debug.assert(written.len > 0);
-
-        self.writeToFile(written);
+        return result;
     }
 };

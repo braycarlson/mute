@@ -8,8 +8,24 @@
         "build.zig.zon",
     },
     .dependencies = .{
-        .toolkit = .{ .url = "https://github.com/braycarlson/toolkit/archive/refs/heads/main.tar.gz", .hash = "toolkit-0.1.0-Zq_UaAPfAAB0Ib1SXQWuTjYMtC1hwfWV_CDTppeDnfnj" },
-        .wca = .{ .url = "https://github.com/braycarlson/zig_wca/archive/refs/heads/main.tar.gz", .hash = "wca-0.0.1-scOi0RDeAQA4zhlk6XDzeHOOdhWccJAVcvSQ5jJRrec4" },
+        .nimble = .{
+            .url = "https://github.com/braycarlson/nimble/archive/refs/heads/main.tar.gz",
+            .hash = "nimble-0.0.1-WsPw0rMUDwA8T7lIL4TmksbPB3QGukSDX7Q-FK5rLSqD",
+        },
+        // .nimble = .{
+        //     .path = "../nimble",
+        // },
+        .wca = .{
+            .url = "https://github.com/braycarlson/zig_wca/archive/refs/heads/main.tar.gz",
+            .hash = "wca-0.0.1-scOi0RDeAQA4zhlk6XDzeHOOdhWccJAVcvSQ5jJRrec4",
+        },
+        // .wisp = .{
+        //     .path = "../wisp",
+        // },
+        .wisp = .{
+            .url = "https://github.com/braycarlson/wisp/archive/refs/heads/main.tar.gz",
+            .hash = "wisp-0.0.1-NPtSMlc6AwBbboMD2zQsgZb3oMIcty8bGbksG6DKjg2m",
+        },
         .zigwin32 = .{
             .url = "https://github.com/marlersoft/zigwin32/archive/refs/heads/main.tar.gz",
             .hash = "zigwin32-25.0.28-preview-AAAAAICM5AMResOGQnQ85mfe60TTOQeMtt7GRATUOKoP",
