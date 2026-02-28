@@ -324,6 +324,7 @@ pub const Widget = struct {
         const height: u32 = @intCast(Size.widget_height);
 
         var row_index: u32 = 0;
+
         while (row_index < height) : (row_index += 1) {
             std.debug.assert(row_index < height);
 
@@ -450,6 +451,7 @@ pub const Widget = struct {
         const length: u32 = @intCast(@min(title_text.len, title_len_max));
 
         var index: u32 = 0;
+
         while (index < length) : (index += 1) {
             std.debug.assert(index < title_len_max);
 

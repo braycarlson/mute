@@ -1,6 +1,7 @@
 .{
     .name = .mute,
     .version = "0.0.1",
+    .minimum_zig_version = "0.15.2",
     .fingerprint = 0xccb9735c1c3e2c6f,
     .paths = .{
         "src",
@@ -9,23 +10,23 @@
     },
     .dependencies = .{
         .nimble = .{
-            .url = "https://github.com/braycarlson/nimble/archive/refs/heads/main.tar.gz",
-            .hash = "nimble-0.0.1-WsPw0rMUDwA8T7lIL4TmksbPB3QGukSDX7Q-FK5rLSqD",
+            .path = "../nimble",
         },
         // .nimble = .{
-        //     .path = "../nimble",
+        //     .url = "https://github.com/braycarlson/nimble/archive/refs/heads/main.tar.gz",
+        //     .hash = "nimble-0.0.1-WsPw0rMUDwA8T7lIL4TmksbPB3QGukSDX7Q-FK5rLSqD",
         // },
         .wca = .{
             .url = "https://github.com/braycarlson/zig_wca/archive/refs/heads/main.tar.gz",
             .hash = "wca-0.0.1-scOi0RDeAQA4zhlk6XDzeHOOdhWccJAVcvSQ5jJRrec4",
         },
-        // .wisp = .{
-        //     .path = "../wisp",
-        // },
         .wisp = .{
-            .url = "https://github.com/braycarlson/wisp/archive/refs/heads/main.tar.gz",
-            .hash = "wisp-0.0.1-NPtSMlc6AwBbboMD2zQsgZb3oMIcty8bGbksG6DKjg2m",
+            .path = "../wisp",
         },
+        // .wisp = .{
+        //     .url = "https://github.com/braycarlson/wisp/archive/refs/heads/main.tar.gz",
+        //     .hash = "wisp-0.0.1-NPtSMlc6AwBbboMD2zQsgZb3oMIcty8bGbksG6DKjg2m",
+        // },
         .zigwin32 = .{
             .url = "https://github.com/marlersoft/zigwin32/archive/refs/heads/main.tar.gz",
             .hash = "zigwin32-25.0.28-preview-AAAAAICM5AMResOGQnQ85mfe60TTOQeMtt7GRATUOKoP",
