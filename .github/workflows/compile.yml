@@ -12,7 +12,7 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - name: Setup Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
@@ -45,7 +45,7 @@ jobs:
           done
 
       - name: Upload Executables as Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: executable-windows
           path: |
@@ -54,7 +54,7 @@ jobs:
           retention-days: 1
 
       - name: Upload Executables to Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.release.tag_name }}
           files: |
