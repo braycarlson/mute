@@ -14,7 +14,7 @@
         // },
         .nimble = .{
             .url = "https://github.com/braycarlson/nimble/archive/refs/heads/main.tar.gz",
-            .hash = "nimble-0.0.1-WsPw0rMUDwA8T7lIL4TmksbPB3QGukSDX7Q-FK5rLSqD",
+            .hash = "nimble-0.0.1-WsPw0rz9DgBxadZ-8Est_JrkblkVZDJkMHNQvRYkZOZS",
         },
         .wca = .{
             .url = "https://github.com/braycarlson/zig_wca/archive/refs/heads/main.tar.gz",
@@ -25,11 +25,11 @@
         // },
         .wisp = .{
             .url = "https://github.com/braycarlson/wisp/archive/refs/heads/main.tar.gz",
-            .hash = "wisp-0.0.1-NPtSMlc6AwBbboMD2zQsgZb3oMIcty8bGbksG6DKjg2m",
+            .hash = "wisp-0.0.1-NPtSMgf5BQAHb-3rYTYtVWzf_BwKwGBV2gO2VpMMD9yT",
         },
         .zigwin32 = .{
             .url = "https://github.com/marlersoft/zigwin32/archive/refs/heads/main.tar.gz",
-            .hash = "zigwin32-25.0.28-preview-AAAAAICM5AMResOGQnQ85mfe60TTOQeMtt7GRATUOKoP",
+            .hash = "win32-25.0.28-preview-mX5pFWMt5QPTVIGh3r2-OpPunpcCCjApyRbA6Zn6WALH",
         },
     },
 }
