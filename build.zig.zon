@@ -24,8 +24,8 @@
         //     .path = "../wisp",
         // },
         .wisp = .{
-            .url = "https://github.com/braycarlson/wisp/archive/5736f8dca2665af230776a0f2e8e3895baf2218e.tar.gz",
-            .hash = "wisp-0.0.1-NPtSMh35BQBDw8rPiIaroPxrxGedAZwUCmZ3hu77-_Sy",
+            .url = "https://github.com/braycarlson/wisp/archive/e4b82863895a239590da224075db02333c8573ed.tar.gz",
+            .hash = "wisp-0.0.1-NPtSMiv5BQAY8sDqDJX8Gv35mwZTKHQW4NQWtY_85bE2",
         },
         .zigwin32 = .{
             .url = "https://github.com/marlersoft/zigwin32/archive/ec98bb4d9eea532320a8551720a9e3ec6de64994.tar.gz",
