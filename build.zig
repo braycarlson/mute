@@ -51,16 +51,16 @@ pub fn build(builder: *std.Build) void {
         }),
     });
 
-    mute.addObjectFile(builder.path("mute.res"));
+    mute.root_module.addObjectFile(builder.path("mute.res"));
     mute.step.dependOn(&mute_resource.step);
 
-    mute.linkLibC();
-    mute.linkSystemLibrary("user32");
-    mute.linkSystemLibrary("gdi32");
-    mute.linkSystemLibrary("gdiplus");
-    mute.linkSystemLibrary("msimg32");
-    mute.linkSystemLibrary("shell32");
-    mute.linkSystemLibrary("ole32");
+    mute.root_module.link_libc = true;
+    mute.root_module.linkSystemLibrary("user32", .{});
+    mute.root_module.linkSystemLibrary("gdi32", .{});
+    mute.root_module.linkSystemLibrary("gdiplus", .{});
+    mute.root_module.linkSystemLibrary("msimg32", .{});
+    mute.root_module.linkSystemLibrary("shell32", .{});
+    mute.root_module.linkSystemLibrary("ole32", .{});
 
     mute.subsystem = .Windows;
 
@@ -81,16 +81,16 @@ pub fn build(builder: *std.Build) void {
         }),
     });
 
-    deafen.addObjectFile(builder.path("deafen.res"));
+    deafen.root_module.addObjectFile(builder.path("deafen.res"));
     deafen.step.dependOn(&deafen_resource.step);
 
-    deafen.linkLibC();
-    deafen.linkSystemLibrary("user32");
-    deafen.linkSystemLibrary("gdi32");
-    deafen.linkSystemLibrary("gdiplus");
-    deafen.linkSystemLibrary("msimg32");
-    deafen.linkSystemLibrary("shell32");
-    deafen.linkSystemLibrary("ole32");
+    deafen.root_module.link_libc = true;
+    deafen.root_module.linkSystemLibrary("user32", .{});
+    deafen.root_module.linkSystemLibrary("gdi32", .{});
+    deafen.root_module.linkSystemLibrary("gdiplus", .{});
+    deafen.root_module.linkSystemLibrary("msimg32", .{});
+    deafen.root_module.linkSystemLibrary("shell32", .{});
+    deafen.root_module.linkSystemLibrary("ole32", .{});
 
     deafen.subsystem = .Windows;
 

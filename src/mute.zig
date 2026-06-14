@@ -3,6 +3,7 @@ const std = @import("std");
 const Application = @import("application.zig").Application;
 const Logger = @import("logger.zig").Logger;
 const Mode = @import("mode.zig").Mode;
+const appdata = @import("appdata.zig");
 
 const log_size_max: usize = 5 * 1024 * 1024;
 
@@ -33,7 +34,7 @@ fn deinit_logger(logger: *?Logger) void {
 }
 
 fn get_log_path(allocator: std.mem.Allocator, comptime mode: Mode) ![]u8 {
-    const directory = try std.fs.getAppDataDir(allocator, "mute");
+    const directory = try appdata.get_app_data_dir(allocator, "mute");
     defer allocator.free(directory);
 
     const result = try std.fs.path.join(allocator, &[_][]const u8{ directory, mode.to_log_filename() });

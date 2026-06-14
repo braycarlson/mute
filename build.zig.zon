@@ -1,7 +1,7 @@
 .{
     .name = .mute,
-    .version = "0.0.1",
-    .minimum_zig_version = "0.15.2",
+    .version = "0.0.2",
+    .minimum_zig_version = "0.16.0",
     .fingerprint = 0xccb9735c1c3e2c6f,
     .paths = .{
         "src",
@@ -9,24 +9,24 @@
         "build.zig.zon",
     },
     .dependencies = .{
+        .nimble = .{
+            .url = "https://github.com/braycarlson/nimble/archive/a5ec14e75a69744687eb87bf144f6a174d70f402.tar.gz",
+            .hash = "nimble-0.0.1-WsPw0kgCDwCyqt8ld1wqhO8PZIlFBuVrwjP1C3wtNIzA",
+        },
         // .nimble = .{
         //     .path = "../nimble",
         // },
-        .nimble = .{
-            .url = "https://github.com/braycarlson/nimble/archive/50f464d2d2301523151cc95f742eb1f31a6d12bb.tar.gz",
-            .hash = "nimble-0.0.1-WsPw0tL9DgC7xoZljycv1Td8NWvoKMFh67XSZraCjRp_",
-        },
         .wca = .{
-            .url = "https://github.com/braycarlson/zig_wca/archive/ba632152440b937adb7eb71514ca0acd8c3c8b8e.tar.gz",
-            .hash = "wca-0.0.1-scOi0RDeAQA4zhlk6XDzeHOOdhWccJAVcvSQ5jJRrec4",
+            .url = "https://github.com/braycarlson/zig_wca/archive/aa4d774eba683c93a6bb95594e576ec9cfc43e15.tar.gz",
+            .hash = "wca-0.0.1-scOi0UrfAQA_SMYTtAhjXldlhfJ7E7zUk-wpCdO3MQ17",
+        },
+        .wisp = .{
+            .url = "https://github.com/braycarlson/wisp/archive/986fd6e70e3e3943828a7816daa17e1271480884.tar.gz",
+            .hash = "wisp-0.0.1-NPtSMjf4BQCoi4TTrSvjk-DoxjanWz7w1x7017Yo5GQc",
         },
         // .wisp = .{
         //     .path = "../wisp",
         // },
-        .wisp = .{
-            .url = "https://github.com/braycarlson/wisp/archive/e4b82863895a239590da224075db02333c8573ed.tar.gz",
-            .hash = "wisp-0.0.1-NPtSMiv5BQAY8sDqDJX8Gv35mwZTKHQW4NQWtY_85bE2",
-        },
         .zigwin32 = .{
             .url = "https://github.com/marlersoft/zigwin32/archive/ec98bb4d9eea532320a8551720a9e3ec6de64994.tar.gz",
             .hash = "win32-25.0.28-preview-mX5pFWMt5QPTVIGh3r2-OpPunpcCCjApyRbA6Zn6WALH",

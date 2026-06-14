@@ -393,7 +393,7 @@ pub const Widget = struct {
     }
 
     pub fn post_toggle(self: *Widget) void {
-        const now = std.time.milliTimestamp();
+        const now: i64 = @intCast(w32.GetTickCount64());
 
         const recently_hidden = self.interaction.focus_loss_hide_time > 0 and
             (now - self.interaction.focus_loss_hide_time) < focus_loss_threshold_ms;
@@ -733,7 +733,7 @@ pub const Widget = struct {
 
     fn handle_kill_focus(self: *Widget) isize {
         if (self.is_window_visible()) {
-            self.interaction.focus_loss_hide_time = std.time.milliTimestamp();
+            self.interaction.focus_loss_hide_time = @intCast(w32.GetTickCount64());
             self.hide();
             self.fire_event(.closed, 0);
         }

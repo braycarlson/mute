@@ -35,10 +35,13 @@ pub const SettingsManager = struct {
 
         var buffer: [Config.content_len_max]u8 = undefined;
 
-        const file = std.fs.openFileAbsolute(path, .{}) catch return false;
-        defer file.close();
+        var threaded: std.Io.Threaded = .init_single_threaded;
+        const io = threaded.io();
 
-        const count = file.readAll(&buffer) catch return false;
+        const file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch return false;
+        defer file.close(io);
+
+        const count = file.readPositionalAll(io, &buffer, 0) catch return false;
 
         if (count == 0) {
             return false;

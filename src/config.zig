@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const nimble = @import("nimble");
+const appdata = @import("appdata.zig");
 
 const keycode = nimble.keycode;
 
@@ -143,8 +144,7 @@ pub const KeySequence = struct {
         std.debug.assert(self.len <= len_max);
 
         var buffer: [output_len_max]u8 = undefined;
-        var fixed_buffer_stream = std.io.fixedBufferStream(&buffer);
-        const writer = fixed_buffer_stream.writer();
+        var writer = std.Io.Writer.fixed(&buffer);
 
         var index: u32 = 0;
         while (index < self.len) : (index += 1) {
@@ -178,7 +178,7 @@ pub const KeySequence = struct {
 
         std.debug.assert(index == self.len);
 
-        const written = fixed_buffer_stream.getWritten();
+        const written = writer.buffered();
 
         std.debug.assert(written.len <= output_len_max);
 
@@ -284,9 +284,12 @@ pub const Config = struct {
         std.debug.assert(path.len > 0);
         std.debug.assert(path.len <= path_len_max);
 
+        var threaded: std.Io.Threaded = .init_single_threaded;
+        const io = threaded.io();
+
         const directory = std.fs.path.dirname(path) orelse return error.InvalidPath;
 
-        std.fs.makeDirAbsolute(directory) catch |err| {
+        std.Io.Dir.createDirAbsolute(io, directory, .default_dir) catch |err| {
             if (err != error.PathAlreadyExists) {
                 return err;
             }
@@ -296,7 +299,7 @@ pub const Config = struct {
     fn load_config_path(self: *Config, app_name: []const u8) !void {
         std.debug.assert(app_name.len > 0);
 
-        const directory = try std.fs.getAppDataDir(self.allocator, app_name);
+        const directory = try appdata.get_app_data_dir(self.allocator, app_name);
         defer self.allocator.free(directory);
 
         std.debug.assert(directory.len > 0);
@@ -327,7 +330,10 @@ pub const Config = struct {
 
         const path = self.config_path[0..self.config_path_len];
 
-        const file = std.fs.openFileAbsolute(path, .{}) catch |err| {
+        var threaded: std.Io.Threaded = .init_single_threaded;
+        const io = threaded.io();
+
+        const file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch |err| {
             if (err == error.FileNotFound) {
                 self.is_loaded_from_file = true;
                 try self.save();
@@ -336,11 +342,11 @@ pub const Config = struct {
 
             return err;
         };
-        defer file.close();
+        defer file.close(io);
 
         var buffer: [content_len_max]u8 = undefined;
 
-        const count = file.readAll(&buffer) catch {
+        const count = file.readPositionalAll(io, &buffer, 0) catch {
             return ConfigError.ParseError;
         };
 
@@ -412,8 +418,11 @@ pub const Config = struct {
         std.debug.assert(path.len > 0);
         std.debug.assert(path.len <= path_len_max);
 
-        const file = try std.fs.createFileAbsolute(path, .{});
-        defer file.close();
+        var threaded: std.Io.Threaded = .init_single_threaded;
+        const io = threaded.io();
+
+        const file = try std.Io.Dir.createFileAbsolute(io, path, .{});
+        defer file.close(io);
 
         var allocating: std.Io.Writer.Allocating = .init(self.allocator);
         defer allocating.deinit();
@@ -426,7 +435,7 @@ pub const Config = struct {
         try std.zon.stringify.serialize(zon, .{}, &allocating.writer);
 
         var buffer: [write_buffer_len_max]u8 = undefined;
-        var writer: std.fs.File.Writer = .init(file, &buffer);
+        var writer = file.writer(io, &buffer);
 
         try writer.interface.writeAll(allocating.writer.buffered());
         try writer.interface.flush();
@@ -464,7 +473,7 @@ pub const Config = struct {
         std.debug.assert(content.len > 0);
         std.debug.assert(content.len <= content_len_max);
 
-        const parsed = std.zon.parse.fromSlice(
+        const parsed = std.zon.parse.fromSliceAlloc(
             ZonConfig,
             self.allocator,
             content,
