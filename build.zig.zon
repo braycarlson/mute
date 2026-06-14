@@ -10,8 +10,8 @@
     },
     .dependencies = .{
         .nimble = .{
-            .url = "https://github.com/braycarlson/nimble/archive/a5ec14e75a69744687eb87bf144f6a174d70f402.tar.gz",
-            .hash = "nimble-0.0.1-WsPw0kgCDwCyqt8ld1wqhO8PZIlFBuVrwjP1C3wtNIzA",
+            .url = "https://github.com/braycarlson/nimble/archive/58eabde604611719fa55b6aa7693f4511fa9b125.tar.gz",
+            .hash = "nimble-0.0.1-WsPw0rwCDwBM-KOg_O35bVdH7CP99B2-LFAq3Rw-IRYw",
         },
         // .nimble = .{
         //     .path = "../nimble",
