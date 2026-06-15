@@ -104,16 +104,16 @@ pub fn DeviceManager(comptime mode: Mode) type {
                 self.allocator,
             ) catch return;
 
-            if (name) |n| {
-                defer self.allocator.free(n);
+            if (name) |device_name| {
+                defer self.allocator.free(device_name);
 
                 const id_len: u32 = @intCast(@min(id.len, DeviceInfo.id_len_max));
-                const name_len: u32 = @intCast(@min(n.len, DeviceInfo.name_len_max));
+                const name_len: u32 = @intCast(@min(device_name.len, DeviceInfo.name_len_max));
 
                 @memcpy(self.list[index].id[0..id_len], id[0..id_len]);
                 self.list[index].id_len = id_len;
 
-                @memcpy(self.list[index].name[0..name_len], n[0..name_len]);
+                @memcpy(self.list[index].name[0..name_len], device_name[0..name_len]);
                 self.list[index].name_len = name_len;
 
                 self.count += 1;
@@ -137,13 +137,13 @@ pub fn DeviceManager(comptime mode: Mode) type {
                 const id = device.get_id() catch return;
                 defer self.allocator.free(id);
 
-                var i: u32 = 0;
+                var index: u32 = 0;
 
-                while (i < self.count) : (i += 1) {
-                    std.debug.assert(i < devices_max);
+                while (index < self.count) : (index += 1) {
+                    std.debug.assert(index < devices_max);
 
-                    if (std.mem.eql(u8, id, self.list[i].get_id_slice())) {
-                        self.index = i;
+                    if (std.mem.eql(u8, id, self.list[index].get_id_slice())) {
+                        self.index = index;
                         return;
                     }
                 }

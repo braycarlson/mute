@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const w32 = @import("win32").everything;
+const win32 = @import("win32").everything;
 
 const nimble = @import("nimble");
 
@@ -14,10 +14,10 @@ const theme = @import("ui/theme.zig");
 const GdiplusContext = @import("ui/context.zig").GdiplusContext;
 const Size = theme.Size;
 
-const VK_LEFT: u32 = 0x25;
-const VK_UP: u32 = 0x26;
-const VK_RIGHT: u32 = 0x27;
-const VK_DOWN: u32 = 0x28;
+const virtual_key_left: u32 = 0x25;
+const virtual_key_up: u32 = 0x26;
+const virtual_key_right: u32 = 0x27;
+const virtual_key_down: u32 = 0x28;
 
 const focus_loss_threshold_ms: i64 = 300;
 const device_name_len_max: u32 = 256;
@@ -63,8 +63,8 @@ const DeviceState = struct {
     }
 
     pub fn set_name(self: *DeviceState, name: ?[]const u8) void {
-        if (name) |n| {
-            const length: u32 = @intCast(@min(n.len, device_name_len_max));
+        if (name) |device_name| {
+            const length: u32 = @intCast(@min(device_name.len, device_name_len_max));
 
             std.debug.assert(length <= device_name_len_max);
 
@@ -72,7 +72,7 @@ const DeviceState = struct {
             while (index < length) : (index += 1) {
                 std.debug.assert(index < device_name_len_max);
 
-                self.name[index] = n[index];
+                self.name[index] = device_name[index];
             }
 
             std.debug.assert(index == length);
@@ -99,14 +99,14 @@ pub const Widget = struct {
     device: DeviceState = .{},
     fonts: renderer.Fonts = .{},
     gdiplus_context: GdiplusContext = .{},
-    handle: ?w32.HWND = null,
+    handle: ?win32.HWND = null,
     interaction: InteractionState = .{},
-    parent: w32.HWND,
+    parent: win32.HWND,
     title: [title_len_max]u8 = [_]u8{0} ** title_len_max,
     title_len: u32 = 0,
     volume: VolumeState = .{},
 
-    pub fn create(allocator: std.mem.Allocator, parent: w32.HWND, class_name: [:0]const u16) !*Widget {
+    pub fn create(allocator: std.mem.Allocator, parent: win32.HWND, class_name: [:0]const u16) !*Widget {
         std.debug.assert(class_name.len > 0);
 
         var self = try allocator.create(Widget);
@@ -133,7 +133,7 @@ pub const Widget = struct {
         self.hide();
 
         if (self.handle) |handle| {
-            _ = w32.DestroyWindow(handle);
+            _ = win32.DestroyWindow(handle);
         }
 
         self.fonts.deinit();
@@ -144,18 +144,18 @@ pub const Widget = struct {
     fn register_class(self: *Widget) !void {
         std.debug.assert(self.class_name.len > 0);
 
-        var window_class = std.mem.zeroes(w32.WNDCLASSEXW);
-        window_class.cbSize = @sizeOf(w32.WNDCLASSEXW);
+        var window_class = std.mem.zeroes(win32.WNDCLASSEXW);
+        window_class.cbSize = @sizeOf(win32.WNDCLASSEXW);
         window_class.lpfnWndProc = window_proc;
         window_class.hInstance = hook.module();
         window_class.lpszClassName = self.class_name;
-        window_class.hCursor = w32.LoadCursorW(null, w32.IDC_ARROW);
+        window_class.hCursor = win32.LoadCursorW(null, win32.IDC_ARROW);
         window_class.style = .{ .HREDRAW = 1, .VREDRAW = 1 };
 
-        const result = w32.RegisterClassExW(&window_class);
+        const result = win32.RegisterClassExW(&window_class);
 
         if (result == 0) {
-            const err = w32.GetLastError();
+            const err = win32.GetLastError();
 
             if (@intFromEnum(err) != 1410) {
                 return error.ClassRegistrationFailed;
@@ -166,7 +166,7 @@ pub const Widget = struct {
     fn create_window(self: *Widget) !void {
         std.debug.assert(self.class_name.len > 0);
 
-        self.handle = w32.CreateWindowExW(
+        self.handle = win32.CreateWindowExW(
             .{ .TOPMOST = 1, .TOOLWINDOW = 1, .LAYERED = 1 },
             self.class_name,
             std.unicode.utf8ToUtf16LeStringLiteral(""),
@@ -185,9 +185,9 @@ pub const Widget = struct {
             return error.WindowCreationFailed;
         }
 
-        _ = w32.SetWindowLongPtrW(
+        _ = win32.SetWindowLongPtrW(
             self.handle.?,
-            w32.GWLP_USERDATA,
+            win32.GWLP_USERDATA,
             @bitCast(@intFromPtr(self)),
         );
     }
@@ -207,7 +207,7 @@ pub const Widget = struct {
         };
     }
 
-    fn paint(self: *Widget, device_context: w32.HDC) void {
+    fn paint(self: *Widget, device_context: win32.HDC) void {
         std.debug.assert(self.volume.current >= 0.0);
         std.debug.assert(self.volume.current <= 1.0);
 
@@ -242,7 +242,7 @@ pub const Widget = struct {
         self.update_layered_window(device_context, bitmap);
     }
 
-    fn update_layered_window(self: *Widget, device_context: w32.HDC, bitmap: *gdiplus.Bitmap) void {
+    fn update_layered_window(self: *Widget, device_context: win32.HDC, bitmap: *gdiplus.Bitmap) void {
         const handle = self.handle orelse return;
 
         var locked: gdiplus.BitmapData = undefined;
@@ -261,48 +261,48 @@ pub const Widget = struct {
 
         defer _ = gdiplus.GdipBitmapUnlockBits(bitmap, &locked);
 
-        var bitmap_info = std.mem.zeroes(w32.BITMAPINFO);
-        bitmap_info.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
+        var bitmap_info = std.mem.zeroes(win32.BITMAPINFO);
+        bitmap_info.bmiHeader.biSize = @sizeOf(win32.BITMAPINFOHEADER);
         bitmap_info.bmiHeader.biWidth = Size.widget_width;
         bitmap_info.bmiHeader.biHeight = -Size.widget_height;
         bitmap_info.bmiHeader.biPlanes = 1;
         bitmap_info.bmiHeader.biBitCount = 32;
-        bitmap_info.bmiHeader.biCompression = w32.BI_RGB;
+        bitmap_info.bmiHeader.biCompression = win32.BI_RGB;
 
-        const memory_device_context = w32.CreateCompatibleDC(device_context);
-        defer _ = w32.DeleteDC(memory_device_context);
+        const memory_device_context = win32.CreateCompatibleDC(device_context);
+        defer _ = win32.DeleteDC(memory_device_context);
 
         var bits: ?*anyopaque = null;
 
-        const dib = w32.CreateDIBSection(
+        const dib = win32.CreateDIBSection(
             memory_device_context,
             &bitmap_info,
-            w32.DIB_RGB_COLORS,
+            win32.DIB_RGB_COLORS,
             &bits,
             null,
             0,
         );
-        defer _ = w32.DeleteObject(dib);
+        defer _ = win32.DeleteObject(dib);
 
         if (bits) |destination| {
             self.copy_bitmap_data(locked, destination);
         }
 
-        _ = w32.SelectObject(memory_device_context, dib);
+        _ = win32.SelectObject(memory_device_context, dib);
 
-        var point_zero = w32.POINT{ .x = 0, .y = 0 };
-        var point_position: w32.POINT = undefined;
-        var window_rect: w32.RECT = undefined;
+        var point_zero = win32.POINT{ .x = 0, .y = 0 };
+        var point_position: win32.POINT = undefined;
+        var window_rect: win32.RECT = undefined;
 
-        _ = w32.GetWindowRect(handle, &window_rect);
+        _ = win32.GetWindowRect(handle, &window_rect);
 
         point_position.x = window_rect.left;
         point_position.y = window_rect.top;
 
-        var size = w32.SIZE{ .cx = Size.widget_width, .cy = Size.widget_height };
+        var size = win32.SIZE{ .cx = Size.widget_width, .cy = Size.widget_height };
         var blend = BLENDFUNCTION{};
 
-        _ = w32.UpdateLayeredWindow(
+        _ = win32.UpdateLayeredWindow(
             handle,
             device_context,
             &point_position,
@@ -311,7 +311,7 @@ pub const Widget = struct {
             &point_zero,
             0,
             @ptrCast(&blend),
-            w32.ULW_ALPHA,
+            win32.ULW_ALPHA,
         );
     }
 
@@ -338,14 +338,11 @@ pub const Widget = struct {
     }
 
     fn invalidate(self: *Widget) void {
-        if (self.handle) |handle| {
-            const device_context = w32.GetDC(handle);
+        const handle = self.handle orelse return;
+        const device_context = win32.GetDC(handle) orelse return;
+        defer _ = win32.ReleaseDC(handle, device_context);
 
-            if (device_context) |dc| {
-                self.paint(dc);
-                _ = w32.ReleaseDC(handle, dc);
-            }
-        }
+        self.paint(device_context);
     }
 
     fn fire_event(self: *Widget, event_type: WidgetEvent, value: f32) void {
@@ -373,7 +370,7 @@ pub const Widget = struct {
 
     fn is_window_visible(self: *Widget) bool {
         if (self.handle) |handle| {
-            return w32.IsWindowVisible(handle) != 0;
+            return win32.IsWindowVisible(handle) != 0;
         }
 
         return false;
@@ -381,7 +378,7 @@ pub const Widget = struct {
 
     pub fn hide(self: *Widget) void {
         if (self.handle) |handle| {
-            _ = w32.ShowWindow(handle, w32.SW_HIDE);
+            _ = win32.ShowWindow(handle, win32.SW_HIDE);
         }
 
         self.interaction.dragging = false;
@@ -393,7 +390,7 @@ pub const Widget = struct {
     }
 
     pub fn post_toggle(self: *Widget) void {
-        const now: i64 = @intCast(w32.GetTickCount64());
+        const now: i64 = @intCast(win32.GetTickCount64());
 
         const recently_hidden = self.interaction.focus_loss_hide_time > 0 and
             (now - self.interaction.focus_loss_hide_time) < focus_loss_threshold_ms;
@@ -486,14 +483,14 @@ pub const Widget = struct {
 
         self.interaction.focus_loss_hide_time = 0;
 
-        var cursor: w32.POINT = undefined;
-        _ = w32.GetCursorPos(&cursor);
+        var cursor: win32.POINT = undefined;
+        _ = win32.GetCursorPos(&cursor);
 
-        var monitor_info: w32.MONITORINFO = undefined;
-        monitor_info.cbSize = @sizeOf(w32.MONITORINFO);
+        var monitor_info: win32.MONITORINFO = undefined;
+        monitor_info.cbSize = @sizeOf(win32.MONITORINFO);
 
-        const monitor = w32.MonitorFromPoint(cursor, w32.MONITOR_DEFAULTTONEAREST);
-        _ = w32.GetMonitorInfoW(monitor, &monitor_info);
+        const monitor = win32.MonitorFromPoint(cursor, win32.MONITOR_DEFAULTTONEAREST);
+        _ = win32.GetMonitorInfoW(monitor, &monitor_info);
 
         const work = monitor_info.rcWork;
         const screen = monitor_info.rcMonitor;
@@ -518,9 +515,9 @@ pub const Widget = struct {
             x = work.left + 12;
         }
 
-        _ = w32.SetWindowPos(
+        _ = win32.SetWindowPos(
             handle,
-            w32.HWND_TOPMOST,
+            win32.HWND_TOPMOST,
             x,
             y,
             Size.widget_width,
@@ -528,8 +525,8 @@ pub const Widget = struct {
             .{ .SHOWWINDOW = 1 },
         );
 
-        _ = w32.ShowWindow(handle, w32.SW_SHOW);
-        _ = w32.SetForegroundWindow(handle);
+        _ = win32.ShowWindow(handle, win32.SW_SHOW);
+        _ = win32.SetForegroundWindow(handle);
 
         self.invalidate();
     }
@@ -543,43 +540,43 @@ pub const Widget = struct {
     }
 
     fn window_proc(
-        hwnd: w32.HWND,
+        hwnd: win32.HWND,
         message: u32,
         w_param: usize,
         l_param: isize,
     ) callconv(.c) isize {
-        const address: isize = w32.GetWindowLongPtrW(hwnd, w32.GWLP_USERDATA);
+        const address: isize = win32.GetWindowLongPtrW(hwnd, win32.GWLP_USERDATA);
 
         if (address == 0) {
-            return w32.DefWindowProcW(hwnd, message, w_param, l_param);
+            return win32.DefWindowProcW(hwnd, message, w_param, l_param);
         }
 
         const self: *Widget = @ptrFromInt(@as(usize, @intCast(address)));
 
         switch (message) {
-            w32.WM_PAINT => return handle_paint(hwnd),
-            w32.WM_MOUSEMOVE => return self.handle_mouse_move(hwnd, l_param),
-            w32.WM_MOUSELEAVE => return self.handle_mouse_leave(),
-            w32.WM_LBUTTONDOWN => return self.handle_left_button_down(hwnd, l_param),
-            w32.WM_LBUTTONUP => return self.handle_left_button_up(l_param),
-            w32.WM_KEYDOWN => return self.handle_key_down(w_param),
-            w32.WM_KILLFOCUS => return self.handle_kill_focus(),
+            win32.WM_PAINT => return handle_paint(hwnd),
+            win32.WM_MOUSEMOVE => return self.handle_mouse_move(hwnd, l_param),
+            win32.WM_MOUSELEAVE => return self.handle_mouse_leave(),
+            win32.WM_LBUTTONDOWN => return self.handle_left_button_down(hwnd, l_param),
+            win32.WM_LBUTTONUP => return self.handle_left_button_up(l_param),
+            win32.WM_KEYDOWN => return self.handle_key_down(w_param),
+            win32.WM_KILLFOCUS => return self.handle_kill_focus(),
             else => {},
         }
 
-        return w32.DefWindowProcW(hwnd, message, w_param, l_param);
+        return win32.DefWindowProcW(hwnd, message, w_param, l_param);
     }
 
-    fn handle_paint(hwnd: w32.HWND) isize {
-        var paint_struct: w32.PAINTSTRUCT = undefined;
+    fn handle_paint(hwnd: win32.HWND) isize {
+        var paint_struct: win32.PAINTSTRUCT = undefined;
 
-        _ = w32.BeginPaint(hwnd, &paint_struct);
-        _ = w32.EndPaint(hwnd, &paint_struct);
+        _ = win32.BeginPaint(hwnd, &paint_struct);
+        _ = win32.EndPaint(hwnd, &paint_struct);
 
         return 0;
     }
 
-    fn handle_mouse_move(self: *Widget, hwnd: w32.HWND, l_param: isize) isize {
+    fn handle_mouse_move(self: *Widget, hwnd: win32.HWND, l_param: isize) isize {
         const x: i32 = @as(i16, @truncate(l_param & 0xFFFF));
         const y: i32 = @as(i16, @truncate((l_param >> 16) & 0xFFFF));
 
@@ -602,14 +599,14 @@ pub const Widget = struct {
             }
         }
 
-        var track_mouse_event = w32.TRACKMOUSEEVENT{
-            .cbSize = @sizeOf(w32.TRACKMOUSEEVENT),
+        var track_mouse_event = win32.TRACKMOUSEEVENT{
+            .cbSize = @sizeOf(win32.TRACKMOUSEEVENT),
             .dwFlags = .{ .LEAVE = 1 },
             .hwndTrack = hwnd,
             .dwHoverTime = 0,
         };
 
-        _ = w32.TrackMouseEvent(&track_mouse_event);
+        _ = win32.TrackMouseEvent(&track_mouse_event);
 
         return 0;
     }
@@ -621,7 +618,7 @@ pub const Widget = struct {
         return 0;
     }
 
-    fn handle_left_button_down(self: *Widget, hwnd: w32.HWND, l_param: isize) isize {
+    fn handle_left_button_down(self: *Widget, hwnd: win32.HWND, l_param: isize) isize {
         const x: i32 = @as(i16, @truncate(l_param & 0xFFFF));
         const y: i32 = @as(i16, @truncate((l_param >> 16) & 0xFFFF));
 
@@ -640,7 +637,7 @@ pub const Widget = struct {
 
             self.invalidate();
             self.fire_event(.volume_changed, new_volume);
-            _ = w32.SetCapture(hwnd);
+            _ = win32.SetCapture(hwnd);
         } else if (region == .button_prev or region == .button_next) {
             self.interaction.focused_region = .device;
             self.invalidate();
@@ -658,7 +655,7 @@ pub const Widget = struct {
 
         if (self.interaction.dragging) {
             self.interaction.dragging = false;
-            _ = w32.ReleaseCapture();
+            _ = win32.ReleaseCapture();
             return 0;
         }
 
@@ -706,7 +703,7 @@ pub const Widget = struct {
     }
 
     fn handle_slider_key_input(self: *Widget, virtual_key: u32) void {
-        if (virtual_key == VK_LEFT or virtual_key == VK_DOWN) {
+        if (virtual_key == virtual_key_left or virtual_key == virtual_key_down) {
             self.volume.current = @max(0.0, self.volume.current - 0.01);
 
             if (self.volume.current == 0.0) {
@@ -715,7 +712,7 @@ pub const Widget = struct {
 
             self.invalidate();
             self.fire_event(.volume_changed, self.volume.current);
-        } else if (virtual_key == VK_RIGHT or virtual_key == VK_UP) {
+        } else if (virtual_key == virtual_key_right or virtual_key == virtual_key_up) {
             self.volume.current = @min(1.0, self.volume.current + 0.01);
             self.volume.is_muted = false;
             self.invalidate();
@@ -724,16 +721,16 @@ pub const Widget = struct {
     }
 
     fn handle_device_key_input(self: *Widget, virtual_key: u32) void {
-        if (virtual_key == VK_LEFT or virtual_key == VK_UP) {
+        if (virtual_key == virtual_key_left or virtual_key == virtual_key_up) {
             self.fire_event(.device_prev, 0);
-        } else if (virtual_key == VK_RIGHT or virtual_key == VK_DOWN) {
+        } else if (virtual_key == virtual_key_right or virtual_key == virtual_key_down) {
             self.fire_event(.device_next, 0);
         }
     }
 
     fn handle_kill_focus(self: *Widget) isize {
         if (self.is_window_visible()) {
-            self.interaction.focus_loss_hide_time = @intCast(w32.GetTickCount64());
+            self.interaction.focus_loss_hide_time = @intCast(win32.GetTickCount64());
             self.hide();
             self.fire_event(.closed, 0);
         }

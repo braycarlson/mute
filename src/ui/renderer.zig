@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const w32 = @import("win32").everything;
+const win32 = @import("win32").everything;
 
 const gdiplus = @import("gdiplus.zig");
 const layout = @import("layout.zig");
@@ -193,7 +193,7 @@ fn draw_device_name(
     graphics: *gdiplus.Graphics,
     fonts: *const Fonts,
     device_name: []const u8,
-    nav: w32.RECT,
+    nav: win32.RECT,
 ) void {
     std.debug.assert(nav.right > nav.left);
     std.debug.assert(nav.bottom > nav.top);
@@ -254,7 +254,7 @@ fn draw_volume_header(
 fn draw_volume_percent(
     graphics: *gdiplus.Graphics,
     font: *gdiplus.Font,
-    rect: w32.RECT,
+    rect: win32.RECT,
     volume: f32,
     is_muted: bool,
 ) void {

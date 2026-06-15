@@ -154,22 +154,22 @@ pub const AudioManager = struct {
     }
 };
 
-fn levenshtein_distance(a: []const u8, b: []const u8) u32 {
+fn levenshtein_distance(source: []const u8, target: []const u8) u32 {
     const row_len_max: u32 = AudioManager.name_len_max + 1;
 
-    std.debug.assert(a.len <= AudioManager.name_len_max);
-    std.debug.assert(b.len <= AudioManager.name_len_max);
+    std.debug.assert(source.len <= AudioManager.name_len_max);
+    std.debug.assert(target.len <= AudioManager.name_len_max);
 
-    if (a.len == 0) {
-        return @intCast(b.len);
+    if (source.len == 0) {
+        return @intCast(target.len);
     }
 
-    if (b.len == 0) {
-        return @intCast(a.len);
+    if (target.len == 0) {
+        return @intCast(source.len);
     }
 
-    const short = if (a.len <= b.len) a else b;
-    const long = if (a.len <= b.len) b else a;
+    const short = if (source.len <= target.len) source else target;
+    const long = if (source.len <= target.len) target else source;
 
     const col: u32 = @intCast(short.len + 1);
     const row_count: u32 = @intCast(long.len);
@@ -232,7 +232,7 @@ fn levenshtein_distance(a: []const u8, b: []const u8) u32 {
 
     const result = prev_row[col - 1];
 
-    std.debug.assert(result <= @max(a.len, b.len));
+    std.debug.assert(result <= @max(source.len, target.len));
 
     return result;
 }

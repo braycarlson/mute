@@ -51,27 +51,27 @@ pub fn EventHandler(comptime mode: Mode) type {
             _ = self.app.event_bus().on(.window_message, on_window_message, self);
         }
 
-        fn on_app_init(e: *const Event, ctx: ?*anyopaque) Response {
-            _ = e;
+        fn on_app_init(event: *const Event, context: ?*anyopaque) Response {
+            _ = event;
 
-            const handler: *Self = @ptrCast(@alignCast(ctx orelse return .pass));
+            const handler: *Self = @ptrCast(@alignCast(context.?));
             handler.dispatcher.on_init();
 
             return .pass;
         }
 
-        fn on_app_shutdown(e: *const Event, ctx: ?*anyopaque) Response {
-            _ = e;
+        fn on_app_shutdown(event: *const Event, context: ?*anyopaque) Response {
+            _ = event;
 
-            const handler: *Self = @ptrCast(@alignCast(ctx orelse return .pass));
+            const handler: *Self = @ptrCast(@alignCast(context.?));
             handler.dispatcher.on_shutdown();
 
             return .pass;
         }
 
-        fn on_icon_change(e: *const Event, ctx: ?*anyopaque) Response {
-            const handler: *Self = @ptrCast(@alignCast(ctx orelse return .pass));
-            const data = e.payload.icon_change;
+        fn on_icon_change(event: *const Event, context: ?*anyopaque) Response {
+            const handler: *Self = @ptrCast(@alignCast(context.?));
+            const data = event.payload.icon_change;
 
             const icon = handler.app.get_icon().get(data.name) orelse return .pass;
 
@@ -80,52 +80,52 @@ pub fn EventHandler(comptime mode: Mode) type {
             return .pass;
         }
 
-        fn on_menu_select(e: *const Event, ctx: ?*anyopaque) Response {
-            const handler: *Self = @ptrCast(@alignCast(ctx orelse return .pass));
-            const data = e.payload.menu_select;
+        fn on_menu_select(event: *const Event, context: ?*anyopaque) Response {
+            const handler: *Self = @ptrCast(@alignCast(context.?));
+            const data = event.payload.menu_select;
 
             handle_command(handler, data.id);
 
             return .pass;
         }
 
-        fn on_menu_show(e: *const Event, ctx: ?*anyopaque) Response {
-            _ = e;
+        fn on_menu_show(event: *const Event, context: ?*anyopaque) Response {
+            _ = event;
 
-            const handler: *Self = @ptrCast(@alignCast(ctx orelse return .pass));
+            const handler: *Self = @ptrCast(@alignCast(context.?));
             handler.dispatcher.on_menu_show();
 
             return .pass;
         }
 
-        fn on_taskbar_restart(e: *const Event, ctx: ?*anyopaque) Response {
-            _ = e;
-            _ = ctx;
+        fn on_taskbar_restart(event: *const Event, context: ?*anyopaque) Response {
+            _ = event;
+            _ = context;
 
             return .pass;
         }
 
-        fn on_timer_tick(e: *const Event, ctx: ?*anyopaque) Response {
-            const handler: *Self = @ptrCast(@alignCast(ctx orelse return .pass));
-            const data = e.payload.timer_tick;
+        fn on_timer_tick(event: *const Event, context: ?*anyopaque) Response {
+            const handler: *Self = @ptrCast(@alignCast(context.?));
+            const data = event.payload.timer_tick;
 
             handler.dispatcher.on_timer_tick(data.id);
 
             return .pass;
         }
 
-        fn on_tray_click(e: *const Event, ctx: ?*anyopaque) Response {
-            _ = e;
+        fn on_tray_click(event: *const Event, context: ?*anyopaque) Response {
+            _ = event;
 
-            const handler: *Self = @ptrCast(@alignCast(ctx orelse return .pass));
+            const handler: *Self = @ptrCast(@alignCast(context.?));
             handler.dispatcher.on_tray_click();
 
             return .pass;
         }
 
-        fn on_window_message(e: *const Event, ctx: ?*anyopaque) Response {
-            const handler: *Self = @ptrCast(@alignCast(ctx orelse return .pass));
-            const data = e.payload.window_message;
+        fn on_window_message(event: *const Event, context: ?*anyopaque) Response {
+            const handler: *Self = @ptrCast(@alignCast(context.?));
+            const data = event.payload.window_message;
 
             switch (data.message) {
                 constant.wm_config_reload => {
@@ -133,8 +133,8 @@ pub fn EventHandler(comptime mode: Mode) type {
                     return .handled;
                 },
                 constant.wm_device_event => {
-                    const event: DeviceEvent = @enumFromInt(data.wparam);
-                    handler.dispatcher.on_device_event(event);
+                    const device_event: DeviceEvent = @enumFromInt(data.wparam);
+                    handler.dispatcher.on_device_event(device_event);
                     return .handled;
                 },
                 else => return .pass,

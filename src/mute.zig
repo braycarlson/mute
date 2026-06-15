@@ -3,17 +3,20 @@ const std = @import("std");
 const Application = @import("application.zig").Application;
 const Logger = @import("logger.zig").Logger;
 const Mode = @import("mode.zig").Mode;
-const appdata = @import("appdata.zig");
+const path_util = @import("path.zig");
 
-const log_size_max: usize = 5 * 1024 * 1024;
+const log_size_max: u32 = 5 * 1024 * 1024;
 
 pub fn main() !void {
-    var logger = init_logger(std.heap.page_allocator, .capture);
+    var threaded: std.Io.Threaded = .init_single_threaded;
+    const io = threaded.io();
+
+    var logger = init_logger(io, .capture);
     defer deinit_logger(&logger);
 
     var application: Application(.capture) = undefined;
 
-    application.init(std.heap.page_allocator, &logger) catch |err| {
+    application.init(std.heap.page_allocator, io, if (logger) |*log| log else null) catch |err| {
         if (logger) |*log| {
             log.log("Failed to initialize: {}", .{err});
         }
@@ -35,23 +38,16 @@ fn deinit_logger(logger: *?Logger) void {
     }
 }
 
-fn get_log_path(allocator: std.mem.Allocator, comptime mode: Mode) ![]u8 {
-    const directory = try appdata.get_app_data_dir(allocator, "mute");
-    defer allocator.free(directory);
+fn init_logger(io: std.Io, comptime mode: Mode) ?Logger {
+    var appdata_buffer: [path_util.path_length_max]u8 = undefined;
 
-    const result = try std.fs.path.join(allocator, &[_][]const u8{ directory, mode.to_log_filename() });
+    const base = path_util.get_appdata_path(&appdata_buffer, "mute") catch return null;
 
-    return result;
-}
+    var path_buffer: [path_util.path_length_max]u8 = undefined;
 
-fn init_logger(allocator: std.mem.Allocator, comptime mode: Mode) ?Logger {
-    const path = get_log_path(allocator, mode) catch return null;
-    defer allocator.free(path);
+    const log_path = path_util.join_path(&path_buffer, base, mode.to_log_filename()) orelse return null;
 
-    return Logger.init(.{
-        .path = path,
-        .size = log_size_max,
-    }) catch return null;
+    return Logger.init(io, .{ .path = log_path, .size = log_size_max }) catch null;
 }
 
 test {

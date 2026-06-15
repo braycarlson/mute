@@ -104,8 +104,8 @@ pub fn HotkeyHandler(comptime queue_capacity: u32) type {
             }
         }
 
-        fn invoke_callback(ctx: *anyopaque, _: *const nimble.Key) nimble.Response {
-            const handler: *Self = @ptrCast(@alignCast(ctx));
+        fn invoke_callback(context: *anyopaque, _: *const nimble.Key) nimble.Response {
+            const handler: *Self = @ptrCast(@alignCast(context));
 
             if (handler.callback) |callback| {
                 callback();
@@ -114,8 +114,8 @@ pub fn HotkeyHandler(comptime queue_capacity: u32) type {
             return .consume;
         }
 
-        fn invoke_callback_sequence(ctx: *anyopaque) void {
-            const handler: *Self = @ptrCast(@alignCast(ctx));
+        fn invoke_callback_sequence(context: *anyopaque) void {
+            const handler: *Self = @ptrCast(@alignCast(context));
 
             if (handler.callback) |callback| {
                 callback();

@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const w32 = @import("win32").everything;
+const win32 = @import("win32").everything;
 
 const arc_count_max: u32 = 4;
 const polygon_points_max: u32 = 16;
@@ -31,7 +31,7 @@ pub const RectF = extern struct {
     width: f32,
     height: f32,
 
-    pub fn from_rect(rect: w32.RECT) RectF {
+    pub fn from_rect(rect: win32.RECT) RectF {
         std.debug.assert(rect.right >= rect.left);
         std.debug.assert(rect.bottom >= rect.top);
 

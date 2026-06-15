@@ -1,17 +1,17 @@
 const std = @import("std");
 
 const wisp = @import("wisp");
-const w32 = @import("win32").everything;
+const win32 = @import("win32").everything;
 
 const Config = @import("config.zig").Config;
 const Logger = @import("logger.zig").Logger;
 
 pub const SettingsManager = struct {
     configuration: *Config,
-    logger: *?Logger,
+    logger: ?*Logger,
     watcher: wisp.Watcher,
 
-    pub fn init(configuration: *Config, logger: *?Logger) SettingsManager {
+    pub fn init(configuration: *Config, logger: ?*Logger) SettingsManager {
         return SettingsManager{
             .configuration = configuration,
             .logger = logger,
@@ -35,8 +35,7 @@ pub const SettingsManager = struct {
 
         var buffer: [Config.content_len_max]u8 = undefined;
 
-        var threaded: std.Io.Threaded = .init_single_threaded;
-        const io = threaded.io();
+        const io = self.configuration.io;
 
         const file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch return false;
         defer file.close(io);
@@ -61,7 +60,7 @@ pub const SettingsManager = struct {
     }
 
     fn log(self: *SettingsManager, message: []const u8) void {
-        if (self.logger.*) |*logger| {
+        if (self.logger) |logger| {
             logger.log("{s}", .{message});
         }
     }
@@ -82,7 +81,7 @@ fn open_path(path: []const u8) void {
 
     buffer[length] = 0;
 
-    _ = w32.ShellExecuteW(
+    _ = win32.ShellExecuteW(
         null,
         std.unicode.utf8ToUtf16LeStringLiteral("open"),
         @ptrCast(&buffer),

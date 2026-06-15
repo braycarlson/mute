@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const w32 = @import("win32").everything;
+const win32 = @import("win32").everything;
 const wca = @import("wca");
 
 const Mode = @import("../mode.zig").Mode;
@@ -19,13 +19,13 @@ pub fn DeviceNotifier(comptime mode: Mode) type {
         allocator: std.mem.Allocator,
         client: ?*wca.IMMNotificationClient = null,
         enumerator: ?*wca.IMMDeviceEnumerator = null,
-        target_hwnd: w32.HWND,
+        target_hwnd: win32.HWND,
         message_id: u32,
 
         var instance: *Self = undefined;
 
-        pub fn init(allocator: std.mem.Allocator, hwnd: w32.HWND, message_id: u32) Self {
-            std.debug.assert(message_id >= w32.WM_APP);
+        pub fn init(allocator: std.mem.Allocator, hwnd: win32.HWND, message_id: u32) Self {
+            std.debug.assert(message_id >= win32.WM_APP);
 
             return Self{
                 .allocator = allocator,
@@ -72,9 +72,9 @@ pub fn DeviceNotifier(comptime mode: Mode) type {
         }
 
         fn post_event(event: DeviceEvent) void {
-            std.debug.assert(instance.message_id >= w32.WM_APP);
+            std.debug.assert(instance.message_id >= win32.WM_APP);
 
-            _ = w32.PostMessageW(
+            _ = win32.PostMessageW(
                 instance.target_hwnd,
                 instance.message_id,
                 @intFromEnum(event),

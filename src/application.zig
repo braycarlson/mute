@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const w32 = @import("win32").everything;
+const win32 = @import("win32").everything;
 
 const nimble = @import("nimble");
 const wca = @import("wca");
@@ -39,7 +39,7 @@ pub fn Application(comptime mode: Mode) type {
         handler: EventHandler(mode),
         hotkey: HotkeyHandler(queue_capacity),
         icon: IconManager(mode),
-        logger: *?Logger,
+        logger: ?*Logger,
         menu: MenuManager(mode),
         notifier: DeviceNotifier(mode),
         settings: SettingsManager,
@@ -60,12 +60,12 @@ pub fn Application(comptime mode: Mode) type {
             .on_tray_click = dispatch_tray_click,
         };
 
-        pub fn init(self: *Self, allocator: std.mem.Allocator, logger: *?Logger) !void {
+        pub fn init(self: *Self, allocator: std.mem.Allocator, io: std.Io, logger: ?*Logger) !void {
             wca.com.initialize(wca.com.COINIT_APARTMENTTHREADED) catch {
                 return error.ComInitFailed;
             };
 
-            const configuration = load_configuration(allocator, logger);
+            const configuration = load_configuration(allocator, io, logger);
 
             self.* = Self{
                 .allocator = allocator,
@@ -168,23 +168,27 @@ pub fn Application(comptime mode: Mode) type {
         }
 
         fn log(self: *Self, message: []const u8) void {
-            if (self.logger.*) |*logger| {
+            std.debug.assert(message.len > 0);
+
+            if (self.logger) |logger| {
                 logger.log("{s}", .{message});
             }
         }
 
         fn log_error(self: *Self, message: []const u8, err: anyerror) void {
-            if (self.logger.*) |*logger| {
+            std.debug.assert(message.len > 0);
+
+            if (self.logger) |logger| {
                 logger.log("{s}: {}", .{ message, err });
             }
         }
 
         fn log_device_info(self: *Self) void {
-            if (self.logger.*) |*l| {
+            if (self.logger) |logger| {
                 if (self.get_device_config().get_name()) |name| {
-                    l.log("Using {s} device: {s}", .{ mode.to_string(), name });
+                    logger.log("Using {s} device: {s}", .{ mode.to_string(), name });
                 } else {
-                    l.log("Using default {s} device", .{mode.to_string()});
+                    logger.log("Using default {s} device", .{mode.to_string()});
                 }
             }
         }
@@ -295,8 +299,8 @@ pub fn Application(comptime mode: Mode) type {
                 self.icon.update(self.active);
                 self.log_device_info();
             } else {
-                if (self.logger.*) |*l| {
-                    l.log("No {s} device found", .{mode.to_string()});
+                if (self.logger) |logger| {
+                    logger.log("No {s} device found", .{mode.to_string()});
                 }
             }
         }
@@ -450,16 +454,16 @@ pub fn Application(comptime mode: Mode) type {
             const app = current() orelse return;
             const hwnd = app.app.get_hwnd() orelse return;
 
-            _ = w32.PostMessageW(hwnd, constant.wm_config_reload, 0, 0);
+            _ = win32.PostMessageW(hwnd, constant.wm_config_reload, 0, 0);
         }
 
-        fn load_configuration(allocator: std.mem.Allocator, logger: *?Logger) Config {
-            return Config.load(allocator, "mute") catch |err| {
-                if (logger.*) |*l| {
-                    l.log("Could not load config file, using defaults: {}", .{err});
+        fn load_configuration(allocator: std.mem.Allocator, io: std.Io, logger: ?*Logger) Config {
+            return Config.load(allocator, io, "mute") catch |err| {
+                if (logger) |present_logger| {
+                    present_logger.log("Could not load config file, using defaults: {}", .{err});
                 }
 
-                return Config.init(allocator);
+                return Config.init(allocator, io);
             };
         }
     };
