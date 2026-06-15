@@ -60,25 +60,17 @@ pub fn Application(comptime mode: Mode) type {
             .on_tray_click = dispatch_tray_click,
         };
 
-        pub fn init(allocator: std.mem.Allocator, logger: *?Logger) !Self {
+        pub fn init(self: *Self, allocator: std.mem.Allocator, logger: *?Logger) !void {
             wca.com.initialize(wca.com.COINIT_APARTMENTTHREADED) catch {
                 return error.ComInitFailed;
             };
 
             const configuration = load_configuration(allocator, logger);
 
-            var app = App.init(.{
-                .name = mode.to_title(),
-                .tooltip = mode.to_tray_title(),
-                .initial_state = "inactive",
-            });
-
-            _ = app.configure();
-
-            return Self{
+            self.* = Self{
                 .allocator = allocator,
                 .active = false,
-                .app = app,
+                .app = undefined,
                 .configuration = configuration,
                 .devices = DeviceManager(mode).init(allocator),
                 .handler = undefined,
@@ -90,6 +82,14 @@ pub fn Application(comptime mode: Mode) type {
                 .settings = undefined,
                 .widget = null,
             };
+
+            self.app.init(.{
+                .name = mode.to_title(),
+                .tooltip = mode.to_tray_title(),
+                .initial_state = "inactive",
+            });
+
+            _ = self.app.configure();
         }
 
         pub fn configure(self: *Self) !void {
@@ -354,53 +354,57 @@ pub fn Application(comptime mode: Mode) type {
             }
         }
 
+        fn current() ?*Self {
+            return instance.load(.seq_cst);
+        }
+
         fn dispatch_config_reload() void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.on_config_reload();
         }
 
         fn dispatch_device_event(event: DeviceEvent) void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.on_device_event(event);
         }
 
         fn dispatch_exit() void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.on_exit();
         }
 
         fn dispatch_init() void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.on_init();
         }
 
         fn dispatch_menu_show() void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.on_menu_show();
         }
 
         fn dispatch_open_settings() void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.on_open_settings();
         }
 
         fn dispatch_shutdown() void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.on_shutdown();
         }
 
         fn dispatch_timer_tick(timer_id: u32) void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.on_timer_tick(timer_id);
         }
 
         fn dispatch_toggle_state() void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.on_toggle_state();
         }
 
         fn dispatch_tray_click() void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.on_tray_click();
         }
 
@@ -438,12 +442,12 @@ pub fn Application(comptime mode: Mode) type {
         }
 
         fn hotkey_callback() void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             app.toggle();
         }
 
         fn on_config_file_changed() void {
-            const app = instance.load(.seq_cst) orelse return;
+            const app = current() orelse return;
             const hwnd = app.app.get_hwnd() orelse return;
 
             _ = w32.PostMessageW(hwnd, constant.wm_config_reload, 0, 0);

@@ -11,7 +11,9 @@ pub fn main() !void {
     var logger = init_logger(std.heap.page_allocator, .render);
     defer deinit_logger(&logger);
 
-    var application = Application(.render).init(std.heap.page_allocator, &logger) catch |err| {
+    var application: Application(.render) = undefined;
+
+    application.init(std.heap.page_allocator, &logger) catch |err| {
         if (logger) |*log| {
             log.log("Failed to initialize: {}", .{err});
         }

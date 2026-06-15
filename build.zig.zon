@@ -10,8 +10,8 @@
     },
     .dependencies = .{
         .nimble = .{
-            .url = "https://github.com/braycarlson/nimble/archive/58eabde604611719fa55b6aa7693f4511fa9b125.tar.gz",
-            .hash = "nimble-0.0.1-WsPw0rwCDwBM-KOg_O35bVdH7CP99B2-LFAq3Rw-IRYw",
+            .url = "https://github.com/braycarlson/nimble/archive/b167ca8590939bef076e2a379139f6aa3a5938d0.tar.gz",
+            .hash = "nimble-0.0.1-WsPw0m7pDgAdECI-BrugwGYjgGDXMWJ15c43-kKICYTD",
         },
         // .nimble = .{
         //     .path = "../nimble",
@@ -21,8 +21,8 @@
             .hash = "wca-0.0.1-scOi0UrfAQA_SMYTtAhjXldlhfJ7E7zUk-wpCdO3MQ17",
         },
         .wisp = .{
-            .url = "https://github.com/braycarlson/wisp/archive/986fd6e70e3e3943828a7816daa17e1271480884.tar.gz",
-            .hash = "wisp-0.0.1-NPtSMjf4BQCoi4TTrSvjk-DoxjanWz7w1x7017Yo5GQc",
+            .url = "https://github.com/braycarlson/wisp/archive/3741e9b7b8e20d075347afdd2c2a2378c84ad0ea.tar.gz",
+            .hash = "wisp-0.0.1-NPtSMmqvBQBUL9pEXL4h9LYDsU8PSp2HJTua6WISiK_Y",
         },
         // .wisp = .{
         //     .path = "../wisp",

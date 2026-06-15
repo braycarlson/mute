@@ -1,5 +1,3 @@
-const std = @import("std");
-
 const nimble = @import("nimble");
 
 pub const HotkeyCallback = *const fn () void;

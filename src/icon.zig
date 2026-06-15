@@ -24,15 +24,17 @@ pub fn IconManager(comptime mode: Mode) type {
         }
 
         pub fn configure(self: *Self) void {
-            _ = IconBuilder.init(self.app.get_icon())
+            const icon = self.app.get_icon();
+
+            _ = IconBuilder.init(icon)
                 .resource("active", constant.Resource.mute_icon)
                 .resource("inactive", constant.Resource.unmute_icon)
                 .system("active_fallback", .shield)
                 .system("inactive_fallback", .application)
-                .done();
+                .done() catch icon;
 
-            self.app.get_icon().set_current("inactive") catch {
-                self.app.get_icon().set_current("inactive_fallback") catch {};
+            icon.set_current("inactive") catch {
+                icon.set_current("inactive_fallback") catch {};
             };
         }
 

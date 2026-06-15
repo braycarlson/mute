@@ -1,5 +1,3 @@
-const std = @import("std");
-
 const wisp = @import("wisp");
 
 const IconManager = @import("icon.zig").IconManager;

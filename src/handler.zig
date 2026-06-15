@@ -127,18 +127,18 @@ pub fn EventHandler(comptime mode: Mode) type {
             const handler: *Self = @ptrCast(@alignCast(ctx orelse return .pass));
             const data = e.payload.window_message;
 
-            if (data.message == constant.wm_config_reload) {
-                handler.dispatcher.on_config_reload();
-                return .handled;
+            switch (data.message) {
+                constant.wm_config_reload => {
+                    handler.dispatcher.on_config_reload();
+                    return .handled;
+                },
+                constant.wm_device_event => {
+                    const event: DeviceEvent = @enumFromInt(data.wparam);
+                    handler.dispatcher.on_device_event(event);
+                    return .handled;
+                },
+                else => return .pass,
             }
-
-            if (data.message == constant.wm_device_event) {
-                const event: DeviceEvent = @enumFromInt(data.wparam);
-                handler.dispatcher.on_device_event(event);
-                return .handled;
-            }
-
-            return .pass;
         }
 
         fn handle_command(handler: *Self, command: u32) void {
