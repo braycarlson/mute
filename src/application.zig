@@ -2,6 +2,7 @@ const std = @import("std");
 
 const win32 = @import("win32").everything;
 
+const arc = @import("arc");
 const nimble = @import("nimble");
 const wca = @import("wca");
 const wisp = @import("wisp");
@@ -16,7 +17,7 @@ const Dispatcher = @import("handler.zig").Dispatcher;
 const EventHandler = @import("handler.zig").EventHandler;
 const HotkeyHandler = @import("hotkey.zig").HotkeyHandler;
 const IconManager = @import("icon.zig").IconManager;
-const Logger = @import("logger.zig").Logger;
+const Logger = arc.Logger;
 const MenuManager = @import("menu.zig").MenuManager;
 const Mode = @import("mode.zig").Mode;
 const SettingsManager = @import("settings.zig").SettingsManager;
@@ -171,7 +172,7 @@ pub fn Application(comptime mode: Mode) type {
             std.debug.assert(message.len > 0);
 
             if (self.logger) |logger| {
-                logger.log("{s}", .{message});
+                logger.info(message, &.{}, @src());
             }
         }
 
@@ -179,16 +180,24 @@ pub fn Application(comptime mode: Mode) type {
             std.debug.assert(message.len > 0);
 
             if (self.logger) |logger| {
-                logger.log("{s}: {}", .{ message, err });
+                logger.@"error"(message, &.{arc.err_from(err)}, @src());
             }
         }
 
         fn log_device_info(self: *Self) void {
             if (self.logger) |logger| {
                 if (self.get_device_config().get_name()) |name| {
-                    logger.log("Using {s} device: {s}", .{ mode.to_string(), name });
+                    logger.info(
+                        "Using device",
+                        &.{ arc.string("kind", mode.to_string()), arc.string("name", name) },
+                        @src(),
+                    );
                 } else {
-                    logger.log("Using default {s} device", .{mode.to_string()});
+                    logger.info(
+                        "Using default device",
+                        &.{arc.string("kind", mode.to_string())},
+                        @src(),
+                    );
                 }
             }
         }
@@ -300,7 +309,11 @@ pub fn Application(comptime mode: Mode) type {
                 self.log_device_info();
             } else {
                 if (self.logger) |logger| {
-                    logger.log("No {s} device found", .{mode.to_string()});
+                    logger.info(
+                        "No device found",
+                        &.{arc.string("kind", mode.to_string())},
+                        @src(),
+                    );
                 }
             }
         }
@@ -460,7 +473,11 @@ pub fn Application(comptime mode: Mode) type {
         fn load_configuration(allocator: std.mem.Allocator, io: std.Io, logger: ?*Logger) Config {
             return Config.load(allocator, io, "mute") catch |err| {
                 if (logger) |present_logger| {
-                    present_logger.log("Could not load config file, using defaults: {}", .{err});
+                    present_logger.@"error"(
+                        "Could not load config file, using defaults",
+                        &.{arc.err_from(err)},
+                        @src(),
+                    );
                 }
 
                 return Config.init(allocator, io);

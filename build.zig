@@ -4,6 +4,9 @@ pub fn build(builder: *std.Build) void {
     const target = builder.standardTargetOptions(.{});
     const optimize = builder.standardOptimizeOption(.{});
 
+    const arc = builder.dependency("arc", .{});
+    const arc_module = arc.module("arc");
+
     const nimble = builder.dependency("nimble", .{});
     const nimble_module = nimble.module("nimble");
 
@@ -43,6 +46,7 @@ pub fn build(builder: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
+                .{ .name = "arc", .module = arc_module },
                 .{ .name = "nimble", .module = nimble_module },
                 .{ .name = "wca", .module = wca_module },
                 .{ .name = "win32", .module = win32_module },
@@ -73,6 +77,7 @@ pub fn build(builder: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
+                .{ .name = "arc", .module = arc_module },
                 .{ .name = "nimble", .module = nimble_module },
                 .{ .name = "wca", .module = wca_module },
                 .{ .name = "win32", .module = win32_module },
@@ -101,6 +106,7 @@ pub fn build(builder: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "arc", .module = arc_module },
             .{ .name = "nimble", .module = nimble_module },
             .{ .name = "wca", .module = wca_module },
             .{ .name = "win32", .module = win32_module },

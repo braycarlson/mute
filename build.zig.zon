@@ -9,6 +9,13 @@
         "build.zig.zon",
     },
     .dependencies = .{
+        .arc = .{
+            .url = "https://github.com/braycarlson/arc/archive/b07e5878086eb49623f77820d05e37d2e2a4b01e.tar.gz",
+            .hash = "arc-0.0.1-vu4oTPj9AgDOpqmLlkhxuZ2REopAzqIg5AXIFv2EjsI5",
+        },
+        // .arc = .{
+        //     .path = "../arc",
+        // },
         .nimble = .{
             .url = "https://github.com/braycarlson/nimble/archive/b167ca8590939bef076e2a379139f6aa3a5938d0.tar.gz",
             .hash = "nimble-0.0.1-WsPw0m7pDgAdECI-BrugwGYjgGDXMWJ15c43-kKICYTD",
