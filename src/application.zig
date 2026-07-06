@@ -3,7 +3,6 @@ const std = @import("std");
 const win32 = @import("win32").everything;
 
 const arc = @import("arc");
-const nimble = @import("nimble");
 const wca = @import("wca");
 const wisp = @import("wisp");
 
@@ -292,7 +291,9 @@ pub fn Application(comptime mode: Mode) type {
 
         fn refresh_hooks(self: *Self) void {
             if (!self.hotkey.is_running()) {
-                self.hotkey.install();
+                self.hotkey.install() catch |err| {
+                    self.log_error("Unable to start hotkey hook", err);
+                };
             }
         }
 
@@ -321,7 +322,10 @@ pub fn Application(comptime mode: Mode) type {
         fn setup_hotkey(self: *Self) void {
             self.hotkey.set_hotkey(self.get_device_config().get_hotkey());
             self.hotkey.set_callback(hotkey_callback);
-            self.hotkey.install();
+
+            self.hotkey.install() catch |err| {
+                self.log_error("Unable to start hotkey hook", err);
+            };
         }
 
         fn setup_widget(self: *Self) void {

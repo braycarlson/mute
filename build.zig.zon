@@ -17,8 +17,8 @@
         //     .path = "../arc",
         // },
         .nimble = .{
-            .url = "https://github.com/braycarlson/nimble/archive/b167ca8590939bef076e2a379139f6aa3a5938d0.tar.gz",
-            .hash = "nimble-0.0.1-WsPw0m7pDgAdECI-BrugwGYjgGDXMWJ15c43-kKICYTD",
+            .url = "https://github.com/braycarlson/nimble/archive/d60571bd82ad4e7bfe480bc5cef9fe7e786e023b.tar.gz",
+            .hash = "nimble-0.0.1-WsPw0pkBEACja-EuGzvy5t1TssoOE0nnn7XBXm9Ey_pJ",
         },
         // .nimble = .{
         //     .path = "../nimble",

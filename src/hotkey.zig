@@ -51,8 +51,8 @@ pub fn HotkeyHandler(comptime queue_capacity: u32) type {
             self.hotkey_len = 0;
         }
 
-        pub fn install(self: *Self) void {
-            self.hook.start() catch {};
+        pub fn install(self: *Self) !void {
+            try self.hook.start();
         }
 
         pub fn remove(self: *Self) void {
@@ -84,9 +84,9 @@ pub fn HotkeyHandler(comptime queue_capacity: u32) type {
                     .{},
                 ) catch null;
             } else {
-                self.binding_id = self.hook.sequence_registry.register(
+                self.binding_id = self.hook.chord_registry.register(
                     keys,
-                    invoke_callback_sequence,
+                    invoke_callback_chord,
                     self,
                     .{},
                 ) catch null;
@@ -98,7 +98,7 @@ pub fn HotkeyHandler(comptime queue_capacity: u32) type {
                 if (self.hotkey_len == 1) {
                     self.hook.registry.unregister(id) catch {};
                 } else {
-                    self.hook.sequence_registry.unregister(id) catch {};
+                    self.hook.chord_registry.unregister(id) catch {};
                 }
                 self.binding_id = null;
             }
@@ -114,12 +114,14 @@ pub fn HotkeyHandler(comptime queue_capacity: u32) type {
             return .consume;
         }
 
-        fn invoke_callback_sequence(context: *anyopaque) void {
+        fn invoke_callback_chord(context: *anyopaque) nimble.Response {
             const handler: *Self = @ptrCast(@alignCast(context));
 
             if (handler.callback) |callback| {
                 callback();
             }
+
+            return .consume;
         }
     };
 }
