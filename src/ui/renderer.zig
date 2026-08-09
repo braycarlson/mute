@@ -1,445 +1,402 @@
 const std = @import("std");
 
-const win32 = @import("win32").everything;
-
-const gdiplus = @import("gdiplus.zig");
+const canvas = @import("canvas.zig");
 const layout = @import("layout.zig");
+const rect = @import("rect.zig");
 const theme = @import("theme.zig");
 
+const assert = std.debug.assert;
+
+const Canvas = canvas.Canvas;
 const Color = theme.Color;
+const Point = rect.Point;
+const Rect = rect.Rect;
 const Size = theme.Size;
 
-const percent_buffer_len_max: u32 = 8;
-const device_name_len_max: u32 = 256;
-const title_len_max: u32 = 64;
+pub const device_name_len_max: u32 = 256;
+pub const percent_bytes_max: u32 = 8;
+pub const title_len_max: u32 = 64;
 
-pub const Fonts = struct {
-    family: ?*gdiplus.FontFamily = null,
-    regular: ?*gdiplus.Font = null,
-    semibold: ?*gdiplus.Font = null,
-    device: ?*gdiplus.Font = null,
-
-    pub fn init() Fonts {
-        var self = Fonts{};
-        const font_name = std.unicode.utf8ToUtf16LeStringLiteral("Segoe UI");
-
-        var family: *gdiplus.FontFamily = undefined;
-        const family_status = gdiplus.GdipCreateFontFamilyFromName(font_name, null, &family);
-
-        if (family_status != .Ok) {
-            return self;
-        }
-
-        self.family = family;
-
-        var regular: *gdiplus.Font = undefined;
-        var semibold: *gdiplus.Font = undefined;
-        var device: *gdiplus.Font = undefined;
-
-        if (gdiplus.GdipCreateFont(family, 9.0, gdiplus.font_style_regular, gdiplus.unit_point, &regular) == .Ok) {
-            self.regular = regular;
-        }
-
-        if (gdiplus.GdipCreateFont(family, 9.0, gdiplus.font_style_semibold, gdiplus.unit_point, &semibold) == .Ok) {
-            self.semibold = semibold;
-        }
-
-        if (gdiplus.GdipCreateFont(family, 10.0, gdiplus.font_style_regular, gdiplus.unit_point, &device) == .Ok) {
-            self.device = device;
-        }
-
-        return self;
-    }
-
-    pub fn deinit(self: *Fonts) void {
-        if (self.regular) |font| {
-            _ = gdiplus.GdipDeleteFont(font);
-            self.regular = null;
-        }
-
-        if (self.semibold) |font| {
-            _ = gdiplus.GdipDeleteFont(font);
-            self.semibold = null;
-        }
-
-        if (self.device) |font| {
-            _ = gdiplus.GdipDeleteFont(font);
-            self.device = null;
-        }
-
-        if (self.family) |family| {
-            _ = gdiplus.GdipDeleteFontFamily(family);
-            self.family = null;
-        }
-
-        std.debug.assert(self.regular == null);
-        std.debug.assert(self.semibold == null);
-        std.debug.assert(self.device == null);
-        std.debug.assert(self.family == null);
-    }
-};
+comptime {
+    assert(device_name_len_max > 0);
+    assert(percent_bytes_max > 0);
+    assert(title_len_max > 0);
+}
 
 pub const State = struct {
-    volume: f32,
-    is_muted: bool,
-    hover: layout.HitRegion,
-    focus: FocusRegion,
-    dragging: bool,
     device_name: []const u8,
+    dragging: bool,
+    focus: FocusRegion,
+    hover: layout.HitRegion,
+    is_muted: bool,
     title: []const u8,
+    volume: f32,
 
     pub const FocusRegion = enum { none, device, slider };
 };
 
-pub fn render(graphics: *gdiplus.Graphics, fonts: *const Fonts, state: *const State) void {
-    std.debug.assert(state.volume >= 0.0);
-    std.debug.assert(state.volume <= 1.0);
-    std.debug.assert(state.device_name.len <= device_name_len_max);
-    std.debug.assert(state.title.len <= title_len_max);
+pub fn render(target: *Canvas, state: *const State) void {
+    assert(state.volume >= 0.0);
+    assert(state.volume <= 1.0);
+    assert(state.device_name.len <= device_name_len_max);
+    assert(state.title.len <= title_len_max);
 
-    _ = gdiplus.GdipGraphicsClear(graphics, 0x00000000);
-    _ = gdiplus.GdipSetSmoothingMode(graphics, gdiplus.smoothing_mode_antialias);
-    _ = gdiplus.GdipSetTextRenderingHint(graphics, gdiplus.text_rendering_hint_cleartype_grid_fit);
+    target.clear();
 
-    draw_background(graphics);
-    draw_title(graphics, fonts, state.title);
-    draw_close_button(graphics, state.hover == .button_close);
-    draw_device_nav(graphics, fonts, state.device_name, state.hover);
-    draw_volume_header(graphics, fonts, state.volume, state.is_muted);
-    draw_speaker_icon(graphics, state.is_muted, state.hover == .icon_speaker);
-    draw_slider(graphics, state);
-    draw_buttons(graphics, fonts, state.hover);
+    draw_background(target);
+    draw_title(target, state.title);
+    draw_close_button(target, state.hover == .button_close);
+    draw_device_nav(target, state.device_name, state.hover);
+    draw_volume_header(target, state.volume, state.is_muted);
+    draw_speaker_icon(target, state.is_muted, state.hover == .icon_speaker);
+    draw_slider(target, state);
+    draw_buttons(target, state.hover);
 }
 
-fn draw_title(graphics: *gdiplus.Graphics, fonts: *const Fonts, title_text: []const u8) void {
-    std.debug.assert(title_text.len <= title_len_max);
-
-    const rect = layout.title();
-    const font = fonts.semibold orelse return;
-
-    gdiplus.draw_text(
-        graphics,
-        title_text,
-        gdiplus.RectF.from_rect(rect),
-        Color.text_dim,
-        font,
-        gdiplus.string_alignment_near,
-        gdiplus.string_alignment_center,
-        false,
-    );
-}
-
-fn draw_background(graphics: *gdiplus.Graphics) void {
-    gdiplus.fill_rounded_rect(
-        graphics,
-        0,
-        0,
-        Size.widget_width,
-        Size.widget_height,
+fn draw_background(target: *Canvas) void {
+    target.fill_rounded_rect(
+        Rect.init(0, 0, Size.widget_width, Size.widget_height),
         Size.corner_radius,
         Color.background,
         Color.border,
     );
 }
 
-fn draw_close_button(graphics: *gdiplus.Graphics, hover: bool) void {
-    const center_point = layout.center(layout.close_button());
+fn draw_title(target: *Canvas, text: []const u8) void {
+    assert(text.len <= title_len_max);
+
+    target.draw_text(.regular_small, text, layout.title(), Color.text_dim, .near, false);
+}
+
+fn draw_close_button(target: *Canvas, hover: bool) void {
+    const middle = layout.close_button().center();
     const color = if (hover) Color.text else Color.text_dim;
 
-    gdiplus.draw_x(graphics, center_point.x, center_point.y, 5, color, 1.5);
+    draw_cross(target, middle.x, middle.y, 5, color, 1.5);
 }
 
-fn draw_device_nav(
-    graphics: *gdiplus.Graphics,
-    fonts: *const Fonts,
-    device_name: []const u8,
-    hover: layout.HitRegion,
-) void {
-    std.debug.assert(device_name.len <= device_name_len_max);
+fn draw_cross(target: *Canvas, x: f32, y: f32, arm: f32, color: u32, thickness: f32) void {
+    assert(arm > 0);
+    assert(thickness > 0);
 
-    const nav = layout.device_nav();
-    const prev = layout.center(layout.prev_button());
-    const next = layout.center(layout.next_button());
+    target.draw_line(x - arm, y - arm, x + arm, y + arm, thickness, color);
+    target.draw_line(x + arm, y - arm, x - arm, y + arm, thickness, color);
+}
 
-    const prev_color = if (hover == .button_prev) Color.text else Color.text_dim;
+fn draw_device_nav(target: *Canvas, device_name: []const u8, hover: layout.HitRegion) void {
+    assert(device_name.len <= device_name_len_max);
+
+    const previous = layout.prev_button().center();
+    const next = layout.next_button().center();
+
+    const previous_color = if (hover == .button_prev) Color.text else Color.text_dim;
     const next_color = if (hover == .button_next) Color.text else Color.text_dim;
 
-    draw_prev_arrow(graphics, prev.x, prev.y, prev_color);
-    draw_next_arrow(graphics, next.x, next.y, next_color);
-    draw_device_name(graphics, fonts, device_name, nav);
-}
-
-fn draw_prev_arrow(graphics: *gdiplus.Graphics, x: f32, y: f32, color: u32) void {
-    const prev_points = [_]gdiplus.PointF{
-        .{ .x = x + 4, .y = y - 6 },
-        .{ .x = x - 4, .y = y },
-        .{ .x = x + 4, .y = y + 6 },
+    const previous_points = [_]Point{
+        .{ .x = previous.x + 4, .y = previous.y - 6 },
+        .{ .x = previous.x - 4, .y = previous.y },
+        .{ .x = previous.x + 4, .y = previous.y + 6 },
     };
 
-    gdiplus.fill_polygon(graphics, &prev_points, color);
-}
-
-fn draw_next_arrow(graphics: *gdiplus.Graphics, x: f32, y: f32, color: u32) void {
-    const next_points = [_]gdiplus.PointF{
-        .{ .x = x - 4, .y = y - 6 },
-        .{ .x = x + 4, .y = y },
-        .{ .x = x - 4, .y = y + 6 },
+    const next_points = [_]Point{
+        .{ .x = next.x - 4, .y = next.y - 6 },
+        .{ .x = next.x + 4, .y = next.y },
+        .{ .x = next.x - 4, .y = next.y + 6 },
     };
 
-    gdiplus.fill_polygon(graphics, &next_points, color);
+    target.fill_polygon(&previous_points, previous_color);
+    target.fill_polygon(&next_points, next_color);
+
+    draw_device_name(target, device_name);
 }
 
-fn draw_device_name(
-    graphics: *gdiplus.Graphics,
-    fonts: *const Fonts,
-    device_name: []const u8,
-    nav: win32.RECT,
-) void {
-    std.debug.assert(nav.right > nav.left);
-    std.debug.assert(nav.bottom > nav.top);
-
+fn draw_device_name(target: *Canvas, device_name: []const u8) void {
     const name = if (device_name.len > 0) device_name else "Default Device";
-    const prev_rect = layout.prev_button();
-    const next_rect = layout.next_button();
-    const font = fonts.device orelse return;
 
-    gdiplus.draw_text(
-        graphics,
-        name,
-        .{
-            .x = @floatFromInt(prev_rect.right + 10),
-            .y = @floatFromInt(nav.top),
-            .width = @floatFromInt(next_rect.left - prev_rect.right - 20),
-            .height = @floatFromInt(nav.bottom - nav.top),
-        },
-        Color.text,
-        font,
-        gdiplus.string_alignment_center,
-        gdiplus.string_alignment_center,
-        true,
-    );
+    const nav = layout.device_nav();
+    const previous = layout.prev_button();
+    const next = layout.next_button();
+
+    const bounds = Rect.init(previous.right + 10, nav.top, next.left - 10, nav.bottom);
+
+    target.draw_text(.regular_large, name, bounds, Color.text, .center, true);
 }
 
-fn draw_volume_header(
-    graphics: *gdiplus.Graphics,
-    fonts: *const Fonts,
-    volume: f32,
-    is_muted: bool,
-) void {
-    std.debug.assert(volume >= 0.0);
-    std.debug.assert(volume <= 1.0);
+fn draw_volume_header(target: *Canvas, volume: f32, is_muted: bool) void {
+    assert(volume >= 0.0);
+    assert(volume <= 1.0);
 
-    const rect = layout.volume_header();
-    const font = fonts.semibold orelse return;
+    const bounds = layout.volume_header();
 
-    gdiplus.draw_text(
-        graphics,
+    target.draw_text(
+        .regular_small,
         "Volume",
-        .{
-            .x = @floatFromInt(rect.left),
-            .y = @floatFromInt(rect.top),
-            .width = 100,
-            .height = @floatFromInt(rect.bottom - rect.top),
-        },
+        Rect.init(bounds.left, bounds.top, bounds.left + 100, bounds.bottom),
         Color.text,
-        font,
-        gdiplus.string_alignment_near,
-        gdiplus.string_alignment_center,
+        .near,
         false,
     );
 
-    draw_volume_percent(graphics, font, rect, volume, is_muted);
+    draw_volume_percent(target, bounds, volume, is_muted);
 }
 
-fn draw_volume_percent(
-    graphics: *gdiplus.Graphics,
-    font: *gdiplus.Font,
-    rect: win32.RECT,
-    volume: f32,
-    is_muted: bool,
-) void {
-    std.debug.assert(volume >= 0.0);
-    std.debug.assert(volume <= 1.0);
+fn draw_volume_percent(target: *Canvas, bounds: Rect, volume: f32, is_muted: bool) void {
+    assert(volume >= 0.0);
+    assert(volume <= 1.0);
 
     const display = if (is_muted) 0.0 else volume;
-    var buffer: [percent_buffer_len_max]u8 = undefined;
+
+    var buffer: [percent_bytes_max]u8 = undefined;
 
     const percent = std.fmt.bufPrint(&buffer, "{d}%", .{
         @as(u32, @intFromFloat(@round(display * 100.0))),
     }) catch "0%";
 
-    std.debug.assert(percent.len <= percent_buffer_len_max);
+    assert(percent.len <= percent_bytes_max);
 
-    gdiplus.draw_text(
-        graphics,
+    target.draw_text(
+        .regular_small,
         percent,
-        .{
-            .x = @floatFromInt(rect.left + 100),
-            .y = @floatFromInt(rect.top),
-            .width = @floatFromInt(rect.right - rect.left - 100),
-            .height = @floatFromInt(rect.bottom - rect.top),
-        },
+        Rect.init(bounds.left + 100, bounds.top, bounds.right, bounds.bottom),
         if (is_muted) Color.muted else Color.accent_hover,
-        font,
-        gdiplus.string_alignment_far,
-        gdiplus.string_alignment_center,
+        .far,
         false,
     );
 }
 
-fn draw_speaker_icon(graphics: *gdiplus.Graphics, is_muted: bool, hover: bool) void {
-    const center_point = layout.center(layout.speaker_icon());
-    const color = if (is_muted) Color.muted else if (hover) Color.text else Color.text_dim;
+fn draw_speaker_icon(target: *Canvas, is_muted: bool, hover: bool) void {
+    const middle = layout.speaker_icon().center();
 
-    const speaker_x = center_point.x - 2;
+    const color = if (is_muted)
+        Color.muted
+    else if (hover)
+        Color.text
+    else
+        Color.text_dim;
 
-    const points = [_]gdiplus.PointF{
-        .{ .x = speaker_x - 4, .y = center_point.y - 2.5 },
-        .{ .x = speaker_x - 1, .y = center_point.y - 2.5 },
-        .{ .x = speaker_x + 3, .y = center_point.y - 6 },
-        .{ .x = speaker_x + 3, .y = center_point.y + 6 },
-        .{ .x = speaker_x - 1, .y = center_point.y + 2.5 },
-        .{ .x = speaker_x - 4, .y = center_point.y + 2.5 },
+    const x = middle.x - 2;
+
+    const points = [_]Point{
+        .{ .x = x - 4, .y = middle.y - 2.5 },
+        .{ .x = x - 1, .y = middle.y - 2.5 },
+        .{ .x = x + 3, .y = middle.y - 6 },
+        .{ .x = x + 3, .y = middle.y + 6 },
+        .{ .x = x - 1, .y = middle.y + 2.5 },
+        .{ .x = x - 4, .y = middle.y + 2.5 },
     };
 
-    gdiplus.fill_polygon(graphics, &points, color);
+    target.fill_polygon(&points, color);
 
     if (is_muted) {
-        gdiplus.draw_x(graphics, center_point.x + 8, center_point.y, 3.5, Color.muted, 1.5);
+        draw_cross(target, middle.x + 8, middle.y, 3.5, Color.muted, 1.5);
     }
 }
 
-fn draw_slider(graphics: *gdiplus.Graphics, state: *const State) void {
-    std.debug.assert(state.volume >= 0.0);
-    std.debug.assert(state.volume <= 1.0);
+fn draw_slider(target: *Canvas, state: *const State) void {
+    assert(state.volume >= 0.0);
+    assert(state.volume <= 1.0);
 
-    const rect = layout.slider();
-    const center_y: f32 = @floatFromInt(rect.top + @divTrunc(rect.bottom - rect.top, 2));
+    const bounds = layout.slider();
     const track = layout.slider_track_bounds();
+
+    const center_y: f32 = @floatFromInt(bounds.top + @divTrunc(bounds.height(), 2));
     const half_height = Size.slider_height / 2.0;
 
     const display = if (state.is_muted) 0.0 else state.volume;
     const fill_width = track.width * display;
 
-    std.debug.assert(fill_width >= 0);
+    assert(fill_width >= 0);
 
-    draw_slider_track(graphics, track.left, track.right, track.width, center_y, half_height);
-    draw_slider_fill(graphics, track.left, center_y, half_height, fill_width, state.is_muted);
-    draw_slider_thumb(graphics, track.left, center_y, fill_width, state);
-}
-
-fn draw_slider_track(graphics: *gdiplus.Graphics, left: f32, right: f32, width: f32, center_y: f32, half_height: f32) void {
-    std.debug.assert(half_height > 0);
-    std.debug.assert(width >= 0);
-
-    gdiplus.fill_ellipse(graphics, left - half_height, center_y - half_height, half_height * 2, half_height * 2, Color.slider_track);
-    gdiplus.fill_rect(graphics, left, center_y - half_height, width, half_height * 2, Color.slider_track);
-    gdiplus.fill_ellipse(graphics, right - half_height, center_y - half_height, half_height * 2, half_height * 2, Color.slider_track);
-}
-
-fn draw_slider_fill(
-    graphics: *gdiplus.Graphics,
-    left: f32,
-    center_y: f32,
-    half_height: f32,
-    fill_width: f32,
-    is_muted: bool,
-) void {
-    std.debug.assert(half_height > 0);
-    std.debug.assert(fill_width >= 0);
-
-    const fill_color = if (is_muted) Color.muted else Color.accent;
+    target.fill_capsule(
+        track.left,
+        center_y,
+        track.right,
+        center_y,
+        half_height,
+        Color.slider_track,
+    );
 
     if (fill_width > 0) {
-        gdiplus.fill_ellipse(graphics, left - half_height, center_y - half_height, half_height * 2, half_height * 2, fill_color);
-        gdiplus.fill_rect(graphics, left, center_y - half_height, fill_width, half_height * 2, fill_color);
-        gdiplus.fill_ellipse(graphics, left + fill_width - half_height, center_y - half_height, half_height * 2, half_height * 2, fill_color);
-    }
-}
+        const fill_color = if (state.is_muted) Color.muted else Color.accent;
 
-fn draw_slider_thumb(
-    graphics: *gdiplus.Graphics,
-    left: f32,
-    center_y: f32,
-    fill_width: f32,
-    state: *const State,
-) void {
-    std.debug.assert(fill_width >= 0);
-
-    const thumb_x = left + fill_width;
-    const is_active = state.hover == .slider or state.dragging or state.focus == .slider;
-    const thumb_radius = if (is_active) Size.slider_thumb_radius + 1 else Size.slider_thumb_radius;
-
-    std.debug.assert(thumb_radius > 0);
-
-    if (is_active) {
-        gdiplus.fill_ellipse(
-            graphics,
-            thumb_x - thumb_radius - 3,
-            center_y - thumb_radius - 3,
-            (thumb_radius + 3) * 2,
-            (thumb_radius + 3) * 2,
-            Color.glow,
+        target.fill_capsule(
+            track.left,
+            center_y,
+            track.left + fill_width,
+            center_y,
+            half_height,
+            fill_color,
         );
     }
 
-    gdiplus.fill_ellipse(graphics, thumb_x - thumb_radius, center_y - thumb_radius, thumb_radius * 2, thumb_radius * 2, Color.text);
+    draw_slider_thumb(target, track.left + fill_width, center_y, state);
 }
 
-fn draw_buttons(graphics: *gdiplus.Graphics, fonts: *const Fonts, hover: layout.HitRegion) void {
-    const set_rect = layout.set_default_button();
-    const reset_rect = layout.reset_default_button();
+fn draw_slider_thumb(target: *Canvas, x: f32, y: f32, state: *const State) void {
+    const active = state.hover == .slider or state.dragging or state.focus == .slider;
+    const radius = if (active) Size.slider_thumb_radius + 1 else Size.slider_thumb_radius;
 
-    std.debug.assert(set_rect.right > set_rect.left);
-    std.debug.assert(reset_rect.right > reset_rect.left);
+    assert(radius > 0);
 
-    gdiplus.fill_rounded_rect(
-        graphics,
-        @floatFromInt(set_rect.left),
-        @floatFromInt(set_rect.top),
-        @floatFromInt(set_rect.right - set_rect.left),
-        @floatFromInt(set_rect.bottom - set_rect.top),
+    if (active) {
+        target.fill_circle(x, y, radius + 3, Color.glow);
+    }
+
+    target.fill_circle(x, y, radius, Color.text);
+}
+
+fn draw_buttons(target: *Canvas, hover: layout.HitRegion) void {
+    const set = layout.set_default_button();
+    const reset = layout.reset_default_button();
+
+    assert(set.width() > 0);
+    assert(reset.width() > 0);
+
+    target.fill_rounded_rect(
+        set,
         Size.button_radius,
         if (hover == .button_set_default) Color.accent_hover else Color.accent,
         null,
     );
 
-    gdiplus.fill_rounded_rect(
-        graphics,
-        @floatFromInt(reset_rect.left),
-        @floatFromInt(reset_rect.top),
-        @floatFromInt(reset_rect.right - reset_rect.left),
-        @floatFromInt(reset_rect.bottom - reset_rect.top),
+    target.fill_rounded_rect(
+        reset,
         Size.button_radius,
         if (hover == .button_reset_default) Color.surface_hover else Color.surface,
         Color.border,
     );
 
-    if (fonts.semibold) |font| {
-        gdiplus.draw_text(
-            graphics,
-            "Set Default",
-            gdiplus.RectF.from_rect(set_rect),
-            Color.text,
-            font,
-            gdiplus.string_alignment_center,
-            gdiplus.string_alignment_center,
-            false,
-        );
+    target.draw_text(.regular_small, "Set Default", set, Color.text, .center, false);
+
+    const reset_color = if (hover == .button_reset_default) Color.text else Color.text_dim;
+
+    target.draw_text(.regular_small, "Reset", reset, reset_color, .center, false);
+}
+
+const testing = std.testing;
+
+const pixel_count: usize = @intCast(Size.widget_width * Size.widget_height);
+
+var scratch: [pixel_count]u32 = @splat(0);
+
+fn draw(state: *const State) *Canvas {
+    canvas_state = Canvas.init(&scratch, Size.widget_width, Size.widget_height);
+
+    render(&canvas_state, state);
+
+    return &canvas_state;
+}
+
+var canvas_state: Canvas = undefined;
+
+fn base() State {
+    return .{
+        .device_name = "Microphone",
+        .dragging = false,
+        .focus = .none,
+        .hover = .none,
+        .is_muted = false,
+        .title = "Mute",
+        .volume = 0.5,
+    };
+}
+
+fn ink_of(target: *const Canvas) u32 {
+    var total: u32 = 0;
+
+    for (target.pixels) |pixel| {
+        if (pixel >> 24 > 0) total += 1;
     }
 
-    if (fonts.regular) |font| {
-        const color = if (hover == .button_reset_default) Color.text else Color.text_dim;
+    return total;
+}
 
-        gdiplus.draw_text(
-            graphics,
-            "Reset",
-            gdiplus.RectF.from_rect(reset_rect),
-            color,
-            font,
-            gdiplus.string_alignment_center,
-            gdiplus.string_alignment_center,
-            false,
-        );
+fn checksum_of(target: *const Canvas) u32 {
+    var total: u32 = 2166136261;
+
+    for (target.pixels) |pixel| {
+        total = (total ^ pixel) *% 16777619;
+    }
+
+    return total;
+}
+
+test "a rendered widget covers most of its surface and leaves the corners clear" {
+    const state = base();
+    const target = draw(&state);
+
+    try testing.expect(ink_of(target) > pixel_count / 2);
+    try testing.expectEqual(@as(u32, 0), target.pixels[0] >> 24);
+}
+
+test "the volume changes what the widget draws" {
+    var state = base();
+
+    const quiet = checksum_of(draw(&state));
+
+    state.volume = 0.9;
+
+    const loud = checksum_of(draw(&state));
+
+    try testing.expect(quiet != loud);
+}
+
+test "muting changes what the widget draws" {
+    var state = base();
+
+    const unmuted = checksum_of(draw(&state));
+
+    state.is_muted = true;
+
+    const muted = checksum_of(draw(&state));
+
+    try testing.expect(unmuted != muted);
+}
+
+test "hovering a region changes what the widget draws" {
+    var state = base();
+
+    const idle = checksum_of(draw(&state));
+
+    state.hover = .button_set_default;
+
+    const hovered = checksum_of(draw(&state));
+
+    try testing.expect(idle != hovered);
+}
+
+test "a device name renders differently from the default label" {
+    var state = base();
+
+    const named = checksum_of(draw(&state));
+
+    state.device_name = "";
+
+    const unnamed = checksum_of(draw(&state));
+
+    try testing.expect(named != unnamed);
+}
+
+test "an arbitrary utf8 device name renders without escaping the widget" {
+    var state = base();
+
+    state.device_name = "\u{00C9}couteurs \u{4E2D}\u{6587} \u{1F50A}";
+
+    const target = draw(&state);
+
+    try testing.expect(ink_of(target) > 0);
+    try testing.expectEqual(@as(u32, 0), target.pixels[0] >> 24);
+}
+
+test "every rendered pixel keeps its colour channels inside its alpha" {
+    const state = base();
+    const target = draw(&state);
+
+    for (target.pixels) |pixel| {
+        const alpha = pixel >> 24;
+
+        try testing.expect(pixel >> 16 & 0xFF <= alpha);
+        try testing.expect(pixel >> 8 & 0xFF <= alpha);
+        try testing.expect(pixel & 0xFF <= alpha);
     }
 }

@@ -1,286 +1,285 @@
 const std = @import("std");
 
-const wca = @import("wca");
+const mantra = @import("mantra");
 
-const AudioManager = @import("audio.zig").AudioManager;
-const Config = @import("../config.zig").Config;
+const audio = @import("audio.zig");
 const DeviceConfig = @import("../config.zig").DeviceConfig;
 const Device = @import("device.zig").Device;
 const Mode = @import("../mode.zig").Mode;
 
-pub const DeviceInfo = struct {
-    const id_len_max: u32 = 256;
-    const name_len_max: u32 = 256;
+const assert = std.debug.assert;
 
-    id: [id_len_max]u8 = [_]u8{0} ** id_len_max,
-    id_len: u32 = 0,
-    name: [name_len_max]u8 = [_]u8{0} ** name_len_max,
-    name_len: u32 = 0,
+pub const DeviceInfo = mantra.DeviceInfo;
+pub const DeviceList = mantra.DeviceList;
 
-    pub fn get_id_slice(self: *const DeviceInfo) []const u8 {
-        std.debug.assert(self.id_len <= id_len_max);
+pub const devices_max: u32 = mantra.devices_max;
 
-        return self.id[0..self.id_len];
-    }
+comptime {
+    assert(devices_max > 0);
+}
 
-    pub fn get_name_slice(self: *const DeviceInfo) []const u8 {
-        std.debug.assert(self.name_len <= name_len_max);
-
-        return self.name[0..self.name_len];
-    }
-};
-
-pub fn DeviceManager(comptime mode: Mode) type {
+pub fn DeviceManagerType(comptime mode: Mode) type {
     return struct {
-        const Self = @This();
-        const devices_max: u32 = 32;
-
-        allocator: std.mem.Allocator,
-        audio: AudioManager,
-        count: u32 = 0,
         current: ?Device = null,
         index: u32 = 0,
-        list: [devices_max]DeviceInfo = undefined,
+        list: DeviceList = DeviceList.init(),
 
-        pub fn init(allocator: std.mem.Allocator) Self {
-            return Self{
-                .allocator = allocator,
-                .audio = AudioManager.init(allocator),
-            };
+        pub fn init() @This() {
+            const result = @This(){};
+
+            assert(result.list.is_empty());
+
+            return result;
         }
 
-        pub fn deinit(self: *Self) void {
-            std.debug.assert(self.count <= devices_max);
-
-            if (self.current) |*device| {
-                device.deinit();
-            }
-
+        pub fn deinit(self: *@This()) void {
             self.current = null;
+            self.index = 0;
+
+            self.list.clear();
+
+            assert(self.list.is_empty());
         }
 
-        pub fn enumerate(self: *Self) void {
-            std.debug.assert(self.count <= devices_max);
+        pub fn count(self: *const @This()) u32 {
+            assert(self.list.count <= devices_max);
 
-            self.count = 0;
-
-            const enumerator = wca.IMMDeviceEnumerator.create() catch return;
-            defer _ = enumerator.release();
-
-            const collection = enumerator.enumAudioEndpoints(
-                mode.to_data_flow(),
-                wca.types.DeviceState.Active,
-            ) catch return;
-            defer _ = collection.release();
-
-            const raw_count = collection.getCount() catch return;
-            const bounded_count = @min(raw_count, devices_max);
-
-            var index: u32 = 0;
-
-            while (index < bounded_count) : (index += 1) {
-                std.debug.assert(index < devices_max);
-
-                const device = collection.item(index) catch continue;
-                defer _ = device.release();
-
-                self.add_device_info(device, index);
-            }
-
-            std.debug.assert(index <= devices_max);
+            return self.list.count;
         }
 
-        fn add_device_info(self: *Self, device: *wca.IMMDevice, index: u32) void {
-            std.debug.assert(index < devices_max);
+        pub fn enumerate(self: *@This()) void {
+            mantra.devices.enumerate(mode.to_direction(), &self.list) catch {
+                self.list.clear();
 
-            const id = device.getId(self.allocator) catch return;
-            defer self.allocator.free(id);
+                return;
+            };
 
-            const store = device.openPropertyStore(wca.constants.StorageMode.Read) catch return;
-            defer _ = store.release();
-
-            const name = store.getStringValue(
-                &wca.property.PKEY_Device_FriendlyName,
-                self.allocator,
-            ) catch return;
-
-            if (name) |device_name| {
-                defer self.allocator.free(device_name);
-
-                const id_len: u32 = @intCast(@min(id.len, DeviceInfo.id_len_max));
-                const name_len: u32 = @intCast(@min(device_name.len, DeviceInfo.name_len_max));
-
-                @memcpy(self.list[index].id[0..id_len], id[0..id_len]);
-                self.list[index].id_len = id_len;
-
-                @memcpy(self.list[index].name[0..name_len], device_name[0..name_len]);
-                self.list[index].name_len = name_len;
-
-                self.count += 1;
-            }
+            assert(self.list.count <= devices_max);
         }
 
-        pub fn find(self: *Self, device_config: *DeviceConfig) ?Device {
-            std.debug.assert(self.count <= devices_max);
-
+        pub fn find(self: *@This(), device_config: *DeviceConfig) ?Device {
             if (device_config.get_name()) |name| {
-                return self.audio.find(name, mode.to_data_flow()) catch null;
+                const found = audio.match(&self.list, name) orelse {
+                    return null;
+                };
+
+                assert(found < self.list.count);
+
+                return Device.init(self.list.items[found].id);
             }
 
-            return self.audio.get_default(mode.to_data_flow(), .Multimedia) catch null;
+            const id = mantra.devices.default(mode.to_direction()) catch {
+                return null;
+            };
+
+            return Device.init(id);
         }
 
-        pub fn update_index(self: *Self) void {
-            std.debug.assert(self.count <= devices_max);
+        pub fn get_current_info(self: *@This()) ?*const DeviceInfo {
+            assert(self.list.count <= devices_max);
 
-            if (self.current) |*device| {
-                const id = device.get_id() catch return;
-                defer self.allocator.free(id);
+            if (self.list.count == 0 or self.index >= self.list.count) {
+                return null;
+            }
 
-                var index: u32 = 0;
+            assert(self.index < devices_max);
 
-                while (index < self.count) : (index += 1) {
-                    std.debug.assert(index < devices_max);
+            return &self.list.items[self.index];
+        }
 
-                    if (std.mem.eql(u8, id, self.list[index].get_id_slice())) {
-                        self.index = index;
-                        return;
-                    }
+        pub fn update_index(self: *@This()) void {
+            const device = self.current orelse return;
+
+            var position: u32 = 0;
+
+            while (position < self.list.count) : (position += 1) {
+                assert(position < devices_max);
+
+                if (self.list.items[position].id.eql(&device.id)) {
+                    self.index = position;
+
+                    return;
                 }
             }
         }
 
-        pub fn save_default(self: *Self) !void {
-            std.debug.assert(self.count <= devices_max);
+        pub fn next(self: *@This()) void {
+            if (self.list.count == 0) {
+                return;
+            }
 
+            const wanted = if (self.index + 1 >= self.list.count) 0 else self.index + 1;
+
+            self.select_by_index(wanted);
+        }
+
+        pub fn previous(self: *@This()) void {
+            if (self.list.count == 0) {
+                return;
+            }
+
+            const wanted = if (self.index == 0) self.list.count - 1 else self.index - 1;
+
+            self.select_by_index(wanted);
+        }
+
+        pub fn restore_default(self: *@This()) mantra.DeviceError!void {
+            if (self.current) |*device| {
+                if (device.is_default()) {
+                    return;
+                }
+
+                try device.set_as_default();
+            }
+        }
+
+        pub fn save_default(self: *@This()) mantra.DeviceError!void {
             if (self.current) |*device| {
                 try device.set_as_default();
             }
         }
 
-        pub fn get_current_info(self: *Self) ?*DeviceInfo {
-            std.debug.assert(self.count <= devices_max);
-
-            if (self.count > 0 and self.index < self.count) {
-                std.debug.assert(self.index < devices_max);
-                return &self.list[self.index];
-            }
-
-            return null;
-        }
-
-        pub fn restore_default(self: *Self) !void {
-            std.debug.assert(self.count <= devices_max);
-
-            if (self.current) |*device| {
-                const is_default = device.is_all_default() catch false;
-
-                if (!is_default) {
-                    try device.set_as_default();
-                }
-            }
-        }
-
-        pub fn next(self: *Self) void {
-            std.debug.assert(self.count <= devices_max);
-
-            if (self.count == 0) {
-                return;
-            }
-
-            const new_index = if (self.index + 1 >= self.count) 0 else self.index + 1;
-
-            self.select_by_index(new_index);
-        }
-
-        pub fn previous(self: *Self) void {
-            std.debug.assert(self.count <= devices_max);
-
-            if (self.count == 0) {
-                return;
-            }
-
-            const new_index = if (self.index == 0) self.count - 1 else self.index - 1;
-
-            self.select_by_index(new_index);
-        }
-
-        fn select_by_index(self: *Self, new_index: u32) void {
-            std.debug.assert(self.count <= devices_max);
-            std.debug.assert(new_index < self.count);
-
-            if (new_index >= self.count) {
-                return;
-            }
-
-            const info = &self.list[new_index];
-            const name = info.get_name_slice();
-
-            if (name.len == 0) {
-                return;
-            }
-
-            const new_device = self.audio.find(name, mode.to_data_flow()) catch return;
-
-            if (self.current) |*old_device| {
-                old_device.deinit();
-            }
-
-            self.current = new_device;
-            self.index = new_index;
-        }
-
-        pub fn handle_added(self: *Self, device_config: *DeviceConfig) bool {
-            std.debug.assert(self.count <= devices_max);
-
+        pub fn handle_added(self: *@This(), device_config: *DeviceConfig) bool {
             if (self.current != null) {
                 return false;
             }
 
             self.current = self.find(device_config);
 
-            if (self.current != null) {
-                self.update_index();
+            if (self.current == null) {
+                return false;
+            }
+
+            self.update_index();
+
+            return true;
+        }
+
+        pub fn handle_removed(self: *@This(), device_config: *DeviceConfig) bool {
+            const device = self.current orelse {
+                return false;
+            };
+
+            const replacement = self.find(device_config) orelse {
+                self.current = null;
+
+                return true;
+            };
+
+            if (!replacement.id.eql(&device.id)) {
+                self.current = null;
+
                 return true;
             }
 
             return false;
         }
 
-        pub fn handle_removed(self: *Self, device_config: *DeviceConfig) bool {
-            std.debug.assert(self.count <= devices_max);
+        fn select_by_index(self: *@This(), wanted: u32) void {
+            assert(wanted < self.list.count);
+            assert(wanted < devices_max);
 
-            if (self.current) |*device| {
-                const id = device.get_id() catch return false;
-                defer self.allocator.free(id);
+            const info = &self.list.items[wanted];
 
-                std.debug.assert(id.len > 0);
-
-                var current = self.find(device_config) orelse {
-                    device.deinit();
-                    self.current = null;
-                    return true;
-                };
-
-                const current_id = current.get_id() catch {
-                    current.deinit();
-                    return false;
-                };
-                defer self.allocator.free(current_id);
-
-                std.debug.assert(current_id.len > 0);
-
-                if (!std.mem.eql(u8, id, current_id)) {
-                    device.deinit();
-                    self.current = null;
-                    current.deinit();
-                    return true;
-                }
-
-                current.deinit();
+            if (!info.id.is_valid()) {
+                return;
             }
 
-            return false;
+            self.current = Device.init(info.id);
+            self.index = wanted;
         }
     };
+}
+
+const testing = std.testing;
+
+const Capture = DeviceManagerType(.capture);
+
+fn seed(manager: *Capture, names: []const []const u8) !void {
+    for (names) |name| {
+        const id = try mantra.DeviceId.init(.capture, name);
+
+        try manager.list.append(DeviceInfo.init(id, name, false));
+    }
+}
+
+test "a fresh manager holds nothing" {
+    var manager = Capture.init();
+
+    try testing.expectEqual(@as(u32, 0), manager.count());
+    try testing.expect(manager.current == null);
+    try testing.expect(manager.get_current_info() == null);
+}
+
+test "cycling wraps in both directions" {
+    var manager = Capture.init();
+
+    try seed(&manager, &.{ "First", "Second", "Third" });
+
+    try testing.expectEqual(@as(u32, 3), manager.count());
+
+    manager.next();
+
+    try testing.expectEqual(@as(u32, 1), manager.index);
+
+    manager.next();
+    manager.next();
+
+    try testing.expectEqual(@as(u32, 0), manager.index);
+
+    manager.previous();
+
+    try testing.expectEqual(@as(u32, 2), manager.index);
+}
+
+test "cycling an empty list is inert" {
+    var manager = Capture.init();
+
+    manager.next();
+    manager.previous();
+
+    try testing.expectEqual(@as(u32, 0), manager.index);
+    try testing.expect(manager.current == null);
+}
+
+test "the index follows the current device after a re-enumeration" {
+    var manager = Capture.init();
+
+    try seed(&manager, &.{ "First", "Second", "Third" });
+
+    manager.current = Device.init(try mantra.DeviceId.init(.capture, "Third"));
+
+    manager.update_index();
+
+    try testing.expectEqual(@as(u32, 2), manager.index);
+
+    const info = manager.get_current_info() orelse return error.MissingInfo;
+
+    try testing.expectEqualStrings("Third", info.get_name());
+}
+
+test "a current device that is gone leaves the index untouched" {
+    var manager = Capture.init();
+
+    try seed(&manager, &.{ "First", "Second" });
+
+    manager.index = 1;
+    manager.current = Device.init(try mantra.DeviceId.init(.capture, "Absent"));
+
+    manager.update_index();
+
+    try testing.expectEqual(@as(u32, 1), manager.index);
+}
+
+test "deinit clears the list and the selection" {
+    var manager = Capture.init();
+
+    try seed(&manager, &.{"First"});
+
+    manager.current = Device.init(try mantra.DeviceId.init(.capture, "First"));
+
+    manager.deinit();
+
+    try testing.expectEqual(@as(u32, 0), manager.count());
+    try testing.expect(manager.current == null);
 }

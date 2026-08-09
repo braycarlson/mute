@@ -2,92 +2,95 @@ const std = @import("std");
 
 const arc = @import("arc");
 const wisp = @import("wisp");
-const win32 = @import("win32").everything;
 
 const Config = @import("config.zig").Config;
+
+const assert = std.debug.assert;
+
 const Logger = arc.Logger;
 
 pub const SettingsManager = struct {
     configuration: *Config,
+    handle: ?wisp.watcher.Handle,
     logger: ?*Logger,
-    watcher: wisp.Watcher,
 
     pub fn init(configuration: *Config, logger: ?*Logger) SettingsManager {
-        return SettingsManager{
+        const result = SettingsManager{
             .configuration = configuration,
+            .handle = null,
             .logger = logger,
-            .watcher = wisp.Watcher.init(),
+        };
+
+        return result;
+    }
+
+    pub fn deinit(manager: *SettingsManager) void {
+        const handle = manager.handle orelse return;
+
+        manager.handle = null;
+
+        wisp.watcher.unwatch(handle);
+
+        assert(manager.handle == null);
+    }
+
+    pub fn open(manager: *SettingsManager) void {
+        const path = manager.configuration.get_config_path() orelse return;
+
+        assert(path.len > 0);
+
+        manager.log("Opening settings file");
+
+        wisp.shell.open(path) catch {
+            manager.log("Unable to open the settings file");
+
+            return;
         };
     }
 
-    pub fn deinit(self: *SettingsManager) void {
-        self.watcher.deinit();
-    }
+    pub fn reload(manager: *SettingsManager) bool {
+        var storage: [Config.content_len_max + 1]u8 = undefined;
 
-    pub fn open(self: *SettingsManager) void {
-        const path = self.configuration.get_config_path() orelse return;
+        const content = manager.configuration.read(&storage) catch {
+            manager.log("Unable to read the settings file");
 
-        self.log("Opening settings file");
-        open_path(path);
-    }
-
-    pub fn reload(self: *SettingsManager) bool {
-        const path = self.configuration.get_config_path() orelse return false;
-
-        var buffer: [Config.content_len_max]u8 = undefined;
-
-        const io = self.configuration.io;
-
-        const file = std.Io.Dir.openFileAbsolute(io, path, .{}) catch return false;
-        defer file.close(io);
-
-        const count = file.readPositionalAll(io, &buffer, 0) catch return false;
-
-        if (count == 0) {
             return false;
-        }
+        };
 
-        buffer[count] = 0;
-        const slice: [:0]const u8 = buffer[0..count :0];
+        manager.configuration.parse(content) catch {
+            manager.log("Unable to parse the settings file");
 
-        self.configuration.parse(slice) catch return false;
+            return false;
+        };
 
         return true;
     }
 
-    pub fn watch(self: *SettingsManager, callback: *const fn () void) void {
-        const path = self.configuration.get_config_path() orelse return;
-        self.watcher.watch(path, callback) catch {};
+    pub fn watch(
+        manager: *SettingsManager,
+        callback: wisp.watcher.Callback,
+        context: ?*anyopaque,
+    ) void {
+        assert(manager.handle == null);
+
+        const path = manager.configuration.get_config_path() orelse return;
+
+        assert(path.len > 0);
+
+        manager.handle = wisp.watcher.watch(path, callback, context) catch {
+            manager.log("Unable to watch the settings file");
+
+            return;
+        };
+
+        assert(manager.handle != null);
     }
 
-    fn log(self: *SettingsManager, message: []const u8) void {
-        if (self.logger) |logger| {
+    fn log(manager: *SettingsManager, message: []const u8) void {
+        assert(message.len > 0);
+
+        if (manager.logger) |logger| {
             logger.info(message, &.{}, @src());
         }
     }
 };
-
-fn open_path(path: []const u8) void {
-    if (path.len == 0 or path.len > Config.path_len_max) {
-        return;
-    }
-
-    var buffer: [Config.path_len_max]u16 = undefined;
-
-    const length = std.unicode.utf8ToUtf16Le(&buffer, path) catch return;
-
-    if (length == 0 or length >= Config.path_len_max) {
-        return;
-    }
-
-    buffer[length] = 0;
-
-    _ = win32.ShellExecuteW(
-        null,
-        std.unicode.utf8ToUtf16LeStringLiteral("open"),
-        @ptrCast(&buffer),
-        null,
-        null,
-        1,
-    );
-}

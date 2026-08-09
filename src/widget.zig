@@ -1,34 +1,38 @@
 const std = @import("std");
 
-const win32 = @import("win32").everything;
+const kalymma = @import("kalymma");
+const wisp = @import("wisp");
 
-const nimble = @import("nimble");
-
-const hook = nimble.hook;
-
-const gdiplus = @import("ui/gdiplus.zig");
+const canvas = @import("ui/canvas.zig");
 const layout = @import("ui/layout.zig");
 const renderer = @import("ui/renderer.zig");
 const theme = @import("ui/theme.zig");
 
-const GdiplusContext = @import("ui/context.zig").GdiplusContext;
+const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
+
+const Canvas = canvas.Canvas;
 const Size = theme.Size;
 
-const virtual_key_left: u32 = 0x25;
-const virtual_key_up: u32 = 0x26;
-const virtual_key_right: u32 = 0x27;
-const virtual_key_down: u32 = 0x28;
+pub const device_name_len_max: u32 = 256;
+pub const focus_loss_threshold_ms: i64 = 300;
+pub const surface_margin: u32 = 12;
+pub const title_len_max: u32 = 64;
+pub const volume_step: f32 = 0.01;
 
-const focus_loss_threshold_ms: i64 = 300;
-const device_name_len_max: u32 = 256;
-const title_len_max: u32 = 64;
-const row_bytes: u32 = @intCast(Size.widget_width * 4);
+comptime {
+    assert(device_name_len_max > 0);
+    assert(focus_loss_threshold_ms > 0);
+    assert(title_len_max > 0);
+    assert(volume_step > 0);
+    assert(Size.widget_width > 0);
+    assert(Size.widget_height > 0);
+    assert(Size.widget_width <= kalymma.width_max);
+    assert(Size.widget_height <= kalymma.height_max);
+}
 
-const BLENDFUNCTION = extern struct {
-    BlendOp: u8 = 0,
-    BlendFlags: u8 = 0,
-    SourceConstantAlpha: u8 = 255,
-    AlphaFormat: u8 = 1,
+pub const Error = error{
+    SurfaceFailed,
 };
 
 pub const WidgetEvent = enum {
@@ -44,697 +48,451 @@ pub const WidgetEvent = enum {
 pub const WidgetCallback = *const fn (event: WidgetEvent, value: f32, context: ?*anyopaque) void;
 
 const VolumeState = struct {
+    before_mute: f32 = 0.5,
     current: f32 = 0.5,
     default: f32 = 0.5,
-    before_mute: f32 = 0.5,
     is_muted: bool = false,
 };
 
 const DeviceState = struct {
-    name: [device_name_len_max]u8 = [_]u8{0} ** device_name_len_max,
-    name_len: u32 = 0,
-    index: u32 = 0,
     count: u32 = 1,
+    index: u32 = 0,
+    name: [device_name_len_max]u8 = @splat(0),
+    name_len: u32 = 0,
 
-    pub fn get_name_slice(self: *const DeviceState) []const u8 {
-        std.debug.assert(self.name_len <= device_name_len_max);
+    pub fn get_name_slice(state: *const DeviceState) []const u8 {
+        assert(state.name_len <= device_name_len_max);
 
-        return self.name[0..self.name_len];
+        return state.name[0..state.name_len];
     }
 
-    pub fn set_name(self: *DeviceState, name: ?[]const u8) void {
-        if (name) |device_name| {
-            const length: u32 = @intCast(@min(device_name.len, device_name_len_max));
+    pub fn set_name(state: *DeviceState, name: ?[]const u8) void {
+        const value = name orelse {
+            state.name_len = 0;
 
-            std.debug.assert(length <= device_name_len_max);
+            return;
+        };
 
-            var index: u32 = 0;
-            while (index < length) : (index += 1) {
-                std.debug.assert(index < device_name_len_max);
+        const length: u32 = @intCast(@min(value.len, device_name_len_max));
 
-                self.name[index] = device_name[index];
-            }
+        @memcpy(state.name[0..length], value[0..length]);
 
-            std.debug.assert(index == length);
+        state.name_len = length;
 
-            self.name_len = length;
-        } else {
-            self.name_len = 0;
-        }
+        assert(state.name_len <= device_name_len_max);
     }
 };
 
 const InteractionState = struct {
     dragging: bool = false,
-    focused_region: renderer.State.FocusRegion = .none,
     focus_loss_hide_time: i64 = 0,
+    focused_region: renderer.State.FocusRegion = .none,
     hover_region: layout.HitRegion = .none,
 };
 
 pub const Widget = struct {
-    allocator: std.mem.Allocator,
+    gpa: Allocator,
     callback: ?WidgetCallback = null,
     callback_context: ?*anyopaque = null,
-    class_name: [:0]const u16,
     device: DeviceState = .{},
-    fonts: renderer.Fonts = .{},
-    gdiplus_context: GdiplusContext = .{},
-    handle: ?win32.HWND = null,
     interaction: InteractionState = .{},
-    parent: win32.HWND,
-    title: [title_len_max]u8 = [_]u8{0} ** title_len_max,
+    surface: kalymma.Handle = .{},
+    title: [title_len_max]u8 = @splat(0),
     title_len: u32 = 0,
     volume: VolumeState = .{},
 
-    pub fn create(allocator: std.mem.Allocator, parent: win32.HWND, class_name: [:0]const u16) !*Widget {
-        std.debug.assert(class_name.len > 0);
+    pub fn create(gpa: Allocator, name: []const u8) Error!*Widget {
+        assert(name.len > 0);
 
-        var self = try allocator.create(Widget);
-        errdefer allocator.destroy(self);
-
-        self.* = Widget{
-            .allocator = allocator,
-            .class_name = class_name,
-            .parent = parent,
+        const self = gpa.create(Widget) catch {
+            return Error.SurfaceFailed;
         };
 
-        self.gdiplus_context = GdiplusContext.init();
-        self.fonts = renderer.Fonts.init();
+        errdefer gpa.destroy(self);
 
-        try self.register_class();
-        try self.create_window();
+        self.* = Widget{ .gpa = gpa };
+
+        self.surface = kalymma.surface.create(.{
+            .anchor = .bottom_right,
+            .height = @intCast(Size.widget_height),
+            .margin = surface_margin,
+            .name = name,
+            .width = @intCast(Size.widget_width),
+        }) catch {
+            return Error.SurfaceFailed;
+        };
+
+        assert(self.surface.is_valid());
 
         return self;
     }
 
-    pub fn destroy(self: *Widget) void {
-        std.debug.assert(self.class_name.len > 0);
+    pub fn destroy(widget: *Widget) void {
+        kalymma.surface.destroy(widget.surface);
 
-        self.hide();
-
-        if (self.handle) |handle| {
-            _ = win32.DestroyWindow(handle);
-        }
-
-        self.fonts.deinit();
-        self.gdiplus_context.deinit();
-        self.allocator.destroy(self);
+        widget.gpa.destroy(widget);
     }
 
-    fn register_class(self: *Widget) !void {
-        std.debug.assert(self.class_name.len > 0);
+    pub fn drain(widget: *Widget) void {
+        var list = kalymma.EventList.init();
 
-        var window_class = std.mem.zeroes(win32.WNDCLASSEXW);
-        window_class.cbSize = @sizeOf(win32.WNDCLASSEXW);
-        window_class.lpfnWndProc = window_proc;
-        window_class.hInstance = hook.module();
-        window_class.lpszClassName = self.class_name;
-        window_class.hCursor = win32.LoadCursorW(null, win32.IDC_ARROW);
-        window_class.style = .{ .HREDRAW = 1, .VREDRAW = 1 };
+        _ = kalymma.events.poll(&list);
 
-        const result = win32.RegisterClassExW(&window_class);
-
-        if (result == 0) {
-            const err = win32.GetLastError();
-
-            if (@intFromEnum(err) != 1410) {
-                return error.ClassRegistrationFailed;
+        for (list.slice()) |event| {
+            if (!event.handle.eql(widget.surface)) {
+                continue;
             }
+
+            widget.dispatch(event.input);
         }
     }
 
-    fn create_window(self: *Widget) !void {
-        std.debug.assert(self.class_name.len > 0);
+    pub fn hide(widget: *Widget) void {
+        kalymma.surface.hide(widget.surface);
 
-        self.handle = win32.CreateWindowExW(
-            .{ .TOPMOST = 1, .TOOLWINDOW = 1, .LAYERED = 1 },
-            self.class_name,
-            std.unicode.utf8ToUtf16LeStringLiteral(""),
-            .{ .POPUP = 1 },
-            0,
-            0,
-            Size.widget_width,
-            Size.widget_height,
-            self.parent,
-            null,
-            hook.module(),
-            null,
-        );
-
-        if (self.handle == null) {
-            return error.WindowCreationFailed;
-        }
-
-        _ = win32.SetWindowLongPtrW(
-            self.handle.?,
-            win32.GWLP_USERDATA,
-            @bitCast(@intFromPtr(self)),
-        );
+        widget.interaction.dragging = false;
+        widget.interaction.focused_region = .none;
     }
 
-    fn get_render_state(self: *Widget) renderer.State {
-        std.debug.assert(self.volume.current >= 0.0);
-        std.debug.assert(self.volume.current <= 1.0);
-
-        return .{
-            .volume = self.volume.current,
-            .is_muted = self.volume.is_muted,
-            .hover = self.interaction.hover_region,
-            .focus = self.interaction.focused_region,
-            .dragging = self.interaction.dragging,
-            .device_name = self.device.get_name_slice(),
-            .title = self.title[0..self.title_len],
-        };
+    pub fn is_visible(widget: *const Widget) bool {
+        return kalymma.surface.is_visible(widget.surface);
     }
 
-    fn paint(self: *Widget, device_context: win32.HDC) void {
-        std.debug.assert(self.volume.current >= 0.0);
-        std.debug.assert(self.volume.current <= 1.0);
+    pub fn post_toggle(widget: *Widget) void {
+        const now: i64 = @intCast(wisp.time.now_ms());
 
-        var bitmap: *gdiplus.Bitmap = undefined;
-
-        const bitmap_status = gdiplus.GdipCreateBitmapFromScan0(
-            Size.widget_width,
-            Size.widget_height,
-            0,
-            gdiplus.pixel_format_32bpp_pargb,
-            null,
-            &bitmap,
-        );
-
-        if (bitmap_status != .Ok) {
-            return;
-        }
-
-        defer _ = gdiplus.GdipDisposeImage(bitmap);
-
-        var graphics: *gdiplus.Graphics = undefined;
-
-        if (gdiplus.GdipGetImageGraphicsContext(bitmap, &graphics) != .Ok) {
-            return;
-        }
-
-        defer _ = gdiplus.GdipDeleteGraphics(graphics);
-
-        const state = self.get_render_state();
-        renderer.render(graphics, &self.fonts, &state);
-
-        self.update_layered_window(device_context, bitmap);
-    }
-
-    fn update_layered_window(self: *Widget, device_context: win32.HDC, bitmap: *gdiplus.Bitmap) void {
-        const handle = self.handle orelse return;
-
-        var locked: gdiplus.BitmapData = undefined;
-
-        const lock_status = gdiplus.GdipBitmapLockBits(
-            bitmap,
-            null,
-            gdiplus.image_lock_mode_read,
-            gdiplus.pixel_format_32bpp_pargb,
-            &locked,
-        );
-
-        if (lock_status != .Ok) {
-            return;
-        }
-
-        defer _ = gdiplus.GdipBitmapUnlockBits(bitmap, &locked);
-
-        var bitmap_info = std.mem.zeroes(win32.BITMAPINFO);
-        bitmap_info.bmiHeader.biSize = @sizeOf(win32.BITMAPINFOHEADER);
-        bitmap_info.bmiHeader.biWidth = Size.widget_width;
-        bitmap_info.bmiHeader.biHeight = -Size.widget_height;
-        bitmap_info.bmiHeader.biPlanes = 1;
-        bitmap_info.bmiHeader.biBitCount = 32;
-        bitmap_info.bmiHeader.biCompression = win32.BI_RGB;
-
-        const memory_device_context = win32.CreateCompatibleDC(device_context);
-        defer _ = win32.DeleteDC(memory_device_context);
-
-        var bits: ?*anyopaque = null;
-
-        const dib = win32.CreateDIBSection(
-            memory_device_context,
-            &bitmap_info,
-            win32.DIB_RGB_COLORS,
-            &bits,
-            null,
-            0,
-        );
-        defer _ = win32.DeleteObject(dib);
-
-        if (bits) |destination| {
-            self.copy_bitmap_data(locked, destination);
-        }
-
-        _ = win32.SelectObject(memory_device_context, dib);
-
-        var point_zero = win32.POINT{ .x = 0, .y = 0 };
-        var point_position: win32.POINT = undefined;
-        var window_rect: win32.RECT = undefined;
-
-        _ = win32.GetWindowRect(handle, &window_rect);
-
-        point_position.x = window_rect.left;
-        point_position.y = window_rect.top;
-
-        var size = win32.SIZE{ .cx = Size.widget_width, .cy = Size.widget_height };
-        var blend = BLENDFUNCTION{};
-
-        _ = win32.UpdateLayeredWindow(
-            handle,
-            device_context,
-            &point_position,
-            &size,
-            memory_device_context,
-            &point_zero,
-            0,
-            @ptrCast(&blend),
-            win32.ULW_ALPHA,
-        );
-    }
-
-    fn copy_bitmap_data(self: *Widget, locked: gdiplus.BitmapData, destination: *anyopaque) void {
-        _ = self;
-
-        const source: [*]u8 = @ptrCast(locked.scan0);
-        const destination_ptr: [*]u8 = @ptrCast(destination);
-        const absolute_stride: u32 = @intCast(if (locked.stride < 0) -locked.stride else locked.stride);
-        const height: u32 = @intCast(Size.widget_height);
-
-        var row_index: u32 = 0;
-
-        while (row_index < height) : (row_index += 1) {
-            std.debug.assert(row_index < height);
-
-            const source_row = source + row_index * absolute_stride;
-            const destination_row = destination_ptr + row_index * row_bytes;
-
-            @memcpy(destination_row[0..row_bytes], source_row[0..row_bytes]);
-        }
-
-        std.debug.assert(row_index == height);
-    }
-
-    fn invalidate(self: *Widget) void {
-        const handle = self.handle orelse return;
-        const device_context = win32.GetDC(handle) orelse return;
-        defer _ = win32.ReleaseDC(handle, device_context);
-
-        self.paint(device_context);
-    }
-
-    fn fire_event(self: *Widget, event_type: WidgetEvent, value: f32) void {
-        if (self.callback) |callback| {
-            callback(event_type, value, self.callback_context);
-        }
-    }
-
-    fn toggle_mute(self: *Widget) void {
-        std.debug.assert(self.volume.current >= 0.0);
-        std.debug.assert(self.volume.current <= 1.0);
-
-        if (self.volume.is_muted) {
-            self.volume.is_muted = false;
-            self.volume.current = self.volume.before_mute;
-            self.invalidate();
-            self.fire_event(.mute_toggled, self.volume.current);
-        } else {
-            self.volume.before_mute = self.volume.current;
-            self.volume.is_muted = true;
-            self.invalidate();
-            self.fire_event(.mute_toggled, 0.0);
-        }
-    }
-
-    fn is_window_visible(self: *Widget) bool {
-        if (self.handle) |handle| {
-            return win32.IsWindowVisible(handle) != 0;
-        }
-
-        return false;
-    }
-
-    pub fn hide(self: *Widget) void {
-        if (self.handle) |handle| {
-            _ = win32.ShowWindow(handle, win32.SW_HIDE);
-        }
-
-        self.interaction.dragging = false;
-        self.interaction.focused_region = .none;
-    }
-
-    pub fn is_visible(self: *Widget) bool {
-        return self.is_window_visible();
-    }
-
-    pub fn post_toggle(self: *Widget) void {
-        const now: i64 = @intCast(win32.GetTickCount64());
-
-        const recently_hidden = self.interaction.focus_loss_hide_time > 0 and
-            (now - self.interaction.focus_loss_hide_time) < focus_loss_threshold_ms;
+        const recently_hidden = widget.interaction.focus_loss_hide_time > 0 and
+            (now - widget.interaction.focus_loss_hide_time) < focus_loss_threshold_ms;
 
         if (recently_hidden) {
-            self.interaction.focus_loss_hide_time = 0;
+            widget.interaction.focus_loss_hide_time = 0;
+
             return;
         }
 
-        if (self.is_window_visible()) {
-            self.hide();
-        } else {
-            self.show();
-        }
+        widget.toggle();
     }
 
-    pub fn set_callback(self: *Widget, callback: WidgetCallback, context: ?*anyopaque) void {
-        self.callback = callback;
-        self.callback_context = context;
+    pub fn set_callback(widget: *Widget, callback: WidgetCallback, context: ?*anyopaque) void {
+        widget.callback = callback;
+        widget.callback_context = context;
     }
 
-    pub fn set_default_volume(self: *Widget, volume: f32) void {
-        std.debug.assert(volume >= 0.0);
-        std.debug.assert(volume <= 1.0);
+    pub fn set_default_volume(widget: *Widget, volume: f32) void {
+        assert(volume >= 0.0);
+        assert(volume <= 1.0);
 
-        self.volume.default = std.math.clamp(volume, 0.0, 1.0);
+        widget.volume.default = std.math.clamp(volume, 0.0, 1.0);
 
-        std.debug.assert(self.volume.default >= 0.0);
-        std.debug.assert(self.volume.default <= 1.0);
-
-        self.invalidate();
+        widget.invalidate();
     }
 
-    pub fn set_device_info(self: *Widget, name: ?[]const u8, index: u32, count: u32) void {
-        self.device.set_name(name);
-        self.device.index = index;
-        self.device.count = count;
+    pub fn set_device_info(widget: *Widget, name: ?[]const u8, index: u32, count: u32) void {
+        widget.device.set_name(name);
 
-        self.invalidate();
+        widget.device.index = index;
+        widget.device.count = count;
+
+        widget.invalidate();
     }
 
-    pub fn set_muted(self: *Widget, muted: bool) void {
-        if (muted and !self.volume.is_muted) {
-            self.volume.before_mute = self.volume.current;
+    pub fn set_muted(widget: *Widget, muted: bool) void {
+        if (muted and !widget.volume.is_muted) {
+            widget.volume.before_mute = widget.volume.current;
         }
 
-        self.volume.is_muted = muted;
+        widget.volume.is_muted = muted;
 
-        self.invalidate();
+        widget.invalidate();
     }
 
-    pub fn set_title(self: *Widget, title_text: []const u8) void {
-        std.debug.assert(title_text.len <= title_len_max);
+    pub fn set_title(widget: *Widget, text: []const u8) void {
+        const length: u32 = @intCast(@min(text.len, title_len_max));
 
-        const length: u32 = @intCast(@min(title_text.len, title_len_max));
+        @memcpy(widget.title[0..length], text[0..length]);
 
-        var index: u32 = 0;
+        widget.title_len = length;
 
-        while (index < length) : (index += 1) {
-            std.debug.assert(index < title_len_max);
+        assert(widget.title_len <= title_len_max);
 
-            self.title[index] = title_text[index];
-        }
-
-        std.debug.assert(index == length);
-
-        self.title_len = length;
-
-        self.invalidate();
+        widget.invalidate();
     }
 
-    pub fn set_volume(self: *Widget, volume: f32) void {
-        std.debug.assert(volume >= 0.0);
-        std.debug.assert(volume <= 1.0);
+    pub fn set_volume(widget: *Widget, volume: f32) void {
+        assert(volume >= 0.0);
+        assert(volume <= 1.0);
 
-        self.volume.current = std.math.clamp(volume, 0.0, 1.0);
+        widget.volume.current = std.math.clamp(volume, 0.0, 1.0);
 
         if (volume > 0.0) {
-            self.volume.is_muted = false;
+            widget.volume.is_muted = false;
         }
 
-        std.debug.assert(self.volume.current >= 0.0);
-        std.debug.assert(self.volume.current <= 1.0);
-
-        self.invalidate();
+        widget.invalidate();
     }
 
-    pub fn show(self: *Widget) void {
-        const handle = self.handle orelse return;
+    pub fn show(widget: *Widget) void {
+        widget.interaction.focus_loss_hide_time = 0;
 
-        self.interaction.focus_loss_hide_time = 0;
-
-        var cursor: win32.POINT = undefined;
-        _ = win32.GetCursorPos(&cursor);
-
-        var monitor_info: win32.MONITORINFO = undefined;
-        monitor_info.cbSize = @sizeOf(win32.MONITORINFO);
-
-        const monitor = win32.MonitorFromPoint(cursor, win32.MONITOR_DEFAULTTONEAREST);
-        _ = win32.GetMonitorInfoW(monitor, &monitor_info);
-
-        const work = monitor_info.rcWork;
-        const screen = monitor_info.rcMonitor;
-        const taskbar_height = screen.bottom - work.bottom;
-
-        var x = work.right - Size.widget_width - 12;
-        var y: i32 = undefined;
-
-        if (taskbar_height > 0) {
-            y = work.bottom - Size.widget_height - 12;
-        } else {
-            const taskbar_top = work.top - screen.top;
-
-            if (taskbar_top > 0) {
-                y = work.top + 12;
-            } else {
-                y = work.bottom - Size.widget_height - 12;
-            }
-        }
-
-        if (x < work.left) {
-            x = work.left + 12;
-        }
-
-        _ = win32.SetWindowPos(
-            handle,
-            win32.HWND_TOPMOST,
-            x,
-            y,
-            Size.widget_width,
-            Size.widget_height,
-            .{ .SHOWWINDOW = 1 },
-        );
-
-        _ = win32.ShowWindow(handle, win32.SW_SHOW);
-        _ = win32.SetForegroundWindow(handle);
-
-        self.invalidate();
-    }
-
-    pub fn toggle(self: *Widget) void {
-        if (self.is_window_visible()) {
-            self.hide();
-        } else {
-            self.show();
-        }
-    }
-
-    fn window_proc(
-        hwnd: win32.HWND,
-        message: u32,
-        w_param: usize,
-        l_param: isize,
-    ) callconv(.c) isize {
-        const address: isize = win32.GetWindowLongPtrW(hwnd, win32.GWLP_USERDATA);
-
-        if (address == 0) {
-            return win32.DefWindowProcW(hwnd, message, w_param, l_param);
-        }
-
-        const self: *Widget = @ptrFromInt(@as(usize, @intCast(address)));
-
-        switch (message) {
-            win32.WM_PAINT => return handle_paint(hwnd),
-            win32.WM_MOUSEMOVE => return self.handle_mouse_move(hwnd, l_param),
-            win32.WM_MOUSELEAVE => return self.handle_mouse_leave(),
-            win32.WM_LBUTTONDOWN => return self.handle_left_button_down(hwnd, l_param),
-            win32.WM_LBUTTONUP => return self.handle_left_button_up(l_param),
-            win32.WM_KEYDOWN => return self.handle_key_down(w_param),
-            win32.WM_KILLFOCUS => return self.handle_kill_focus(),
-            else => {},
-        }
-
-        return win32.DefWindowProcW(hwnd, message, w_param, l_param);
-    }
-
-    fn handle_paint(hwnd: win32.HWND) isize {
-        var paint_struct: win32.PAINTSTRUCT = undefined;
-
-        _ = win32.BeginPaint(hwnd, &paint_struct);
-        _ = win32.EndPaint(hwnd, &paint_struct);
-
-        return 0;
-    }
-
-    fn handle_mouse_move(self: *Widget, hwnd: win32.HWND, l_param: isize) isize {
-        const x: i32 = @as(i16, @truncate(l_param & 0xFFFF));
-        const y: i32 = @as(i16, @truncate((l_param >> 16) & 0xFFFF));
-
-        if (self.interaction.dragging) {
-            const new_volume = layout.volume_from_x(x);
-            self.volume.current = new_volume;
-
-            if (new_volume > 0.0) {
-                self.volume.is_muted = false;
-            }
-
-            self.invalidate();
-            self.fire_event(.volume_changed, new_volume);
-        } else {
-            const new_hover = layout.hit_test(x, y);
-
-            if (new_hover != self.interaction.hover_region) {
-                self.interaction.hover_region = new_hover;
-                self.invalidate();
-            }
-        }
-
-        var track_mouse_event = win32.TRACKMOUSEEVENT{
-            .cbSize = @sizeOf(win32.TRACKMOUSEEVENT),
-            .dwFlags = .{ .LEAVE = 1 },
-            .hwndTrack = hwnd,
-            .dwHoverTime = 0,
+        kalymma.surface.show(widget.surface) catch {
+            return;
         };
 
-        _ = win32.TrackMouseEvent(&track_mouse_event);
-
-        return 0;
+        widget.invalidate();
     }
 
-    fn handle_mouse_leave(self: *Widget) isize {
-        self.interaction.hover_region = .none;
-        self.invalidate();
+    pub fn toggle(widget: *Widget) void {
+        if (widget.is_visible()) {
+            widget.hide();
 
-        return 0;
+            return;
+        }
+
+        widget.show();
     }
 
-    fn handle_left_button_down(self: *Widget, hwnd: win32.HWND, l_param: isize) isize {
-        const x: i32 = @as(i16, @truncate(l_param & 0xFFFF));
-        const y: i32 = @as(i16, @truncate((l_param >> 16) & 0xFFFF));
+    fn get_render_state(widget: *const Widget) renderer.State {
+        assert(widget.volume.current >= 0.0);
+        assert(widget.volume.current <= 1.0);
 
+        return .{
+            .device_name = widget.device.get_name_slice(),
+            .dragging = widget.interaction.dragging,
+            .focus = widget.interaction.focused_region,
+            .hover = widget.interaction.hover_region,
+            .is_muted = widget.volume.is_muted,
+            .title = widget.title[0..widget.title_len],
+            .volume = widget.volume.current,
+        };
+    }
+
+    fn invalidate(widget: *Widget) void {
+        const pixels = kalymma.surface.frame(widget.surface);
+
+        if (pixels.len == 0) {
+            return;
+        }
+
+        var target = Canvas.init(pixels, Size.widget_width, Size.widget_height);
+
+        const state = widget.get_render_state();
+
+        renderer.render(&target, &state);
+
+        kalymma.surface.present(widget.surface) catch {
+            return;
+        };
+    }
+
+    fn fire_event(widget: *Widget, event: WidgetEvent, value: f32) void {
+        const callback = widget.callback orelse return;
+
+        callback(event, value, widget.callback_context);
+    }
+
+    fn dispatch(widget: *Widget, input: kalymma.InputEvent) void {
+        switch (input) {
+            .pointer_move => |point| widget.on_pointer_move(point.x, point.y),
+            .pointer_down => |point| widget.on_pointer_down(point.x, point.y),
+            .pointer_up => |point| widget.on_pointer_up(point.x, point.y),
+            .pointer_leave => widget.on_pointer_leave(),
+            .key_down => |key| widget.on_key_down(key),
+            .focus_lost => widget.on_focus_lost(),
+        }
+    }
+
+    fn on_pointer_move(widget: *Widget, x: i32, y: i32) void {
+        if (widget.interaction.dragging) {
+            widget.apply_slider(layout.volume_from_x(x));
+
+            return;
+        }
+
+        const hover = layout.hit_test(x, y);
+
+        if (hover == widget.interaction.hover_region) {
+            return;
+        }
+
+        widget.interaction.hover_region = hover;
+
+        widget.invalidate();
+    }
+
+    fn on_pointer_down(widget: *Widget, x: i32, y: i32) void {
         const region = layout.hit_test(x, y);
 
         if (region == .slider) {
-            self.interaction.dragging = true;
-            self.interaction.focused_region = .slider;
+            widget.interaction.dragging = true;
+            widget.interaction.focused_region = .slider;
 
-            const new_volume = layout.volume_from_x(x);
-            self.volume.current = new_volume;
+            widget.apply_slider(layout.volume_from_x(x));
 
-            if (new_volume > 0.0) {
-                self.volume.is_muted = false;
-            }
-
-            self.invalidate();
-            self.fire_event(.volume_changed, new_volume);
-            _ = win32.SetCapture(hwnd);
-        } else if (region == .button_prev or region == .button_next) {
-            self.interaction.focused_region = .device;
-            self.invalidate();
-        } else {
-            self.interaction.focused_region = .none;
-            self.invalidate();
+            return;
         }
 
-        return 0;
+        widget.interaction.focused_region = if (region == .button_prev or region == .button_next)
+            .device
+        else
+            .none;
+
+        widget.invalidate();
     }
 
-    fn handle_left_button_up(self: *Widget, l_param: isize) isize {
-        const x: i32 = @as(i16, @truncate(l_param & 0xFFFF));
-        const y: i32 = @as(i16, @truncate((l_param >> 16) & 0xFFFF));
+    fn on_pointer_up(widget: *Widget, x: i32, y: i32) void {
+        if (widget.interaction.dragging) {
+            widget.interaction.dragging = false;
 
-        if (self.interaction.dragging) {
-            self.interaction.dragging = false;
-            _ = win32.ReleaseCapture();
-            return 0;
+            widget.invalidate();
+
+            return;
         }
 
         switch (layout.hit_test(x, y)) {
             .button_prev => {
-                self.interaction.focused_region = .device;
-                self.fire_event(.device_prev, 0);
+                widget.interaction.focused_region = .device;
+
+                widget.fire_event(.device_prev, 0);
             },
             .button_next => {
-                self.interaction.focused_region = .device;
-                self.fire_event(.device_next, 0);
+                widget.interaction.focused_region = .device;
+
+                widget.fire_event(.device_next, 0);
             },
             .button_set_default => {
-                self.fire_event(.set_default, self.volume.current);
+                widget.fire_event(.set_default, widget.volume.current);
             },
             .button_reset_default => {
-                self.volume.current = self.volume.default;
-                self.volume.is_muted = false;
-                self.invalidate();
-                self.fire_event(.reset_default, self.volume.default);
+                widget.volume.current = widget.volume.default;
+                widget.volume.is_muted = false;
+
+                widget.invalidate();
+                widget.fire_event(.reset_default, widget.volume.default);
             },
             .icon_speaker => {
-                self.toggle_mute();
+                widget.toggle_mute();
             },
             .button_close => {
-                self.hide();
-                self.fire_event(.closed, 0);
+                widget.hide();
+                widget.fire_event(.closed, 0);
             },
             else => {},
         }
-
-        return 0;
     }
 
-    fn handle_key_down(self: *Widget, w_param: usize) isize {
-        const virtual_key: u32 = @truncate(w_param);
+    fn on_pointer_leave(widget: *Widget) void {
+        widget.interaction.hover_region = .none;
 
-        if (self.interaction.focused_region == .slider) {
-            self.handle_slider_key_input(virtual_key);
-        } else if (self.interaction.focused_region == .device) {
-            self.handle_device_key_input(virtual_key);
-        }
-
-        return 0;
+        widget.invalidate();
     }
 
-    fn handle_slider_key_input(self: *Widget, virtual_key: u32) void {
-        if (virtual_key == virtual_key_left or virtual_key == virtual_key_down) {
-            self.volume.current = @max(0.0, self.volume.current - 0.01);
-
-            if (self.volume.current == 0.0) {
-                self.volume.is_muted = true;
-            }
-
-            self.invalidate();
-            self.fire_event(.volume_changed, self.volume.current);
-        } else if (virtual_key == virtual_key_right or virtual_key == virtual_key_up) {
-            self.volume.current = @min(1.0, self.volume.current + 0.01);
-            self.volume.is_muted = false;
-            self.invalidate();
-            self.fire_event(.volume_changed, self.volume.current);
+    fn on_key_down(widget: *Widget, key: kalymma.Key) void {
+        switch (widget.interaction.focused_region) {
+            .slider => widget.on_slider_key(key),
+            .device => widget.on_device_key(key),
+            .none => {},
         }
     }
 
-    fn handle_device_key_input(self: *Widget, virtual_key: u32) void {
-        if (virtual_key == virtual_key_left or virtual_key == virtual_key_up) {
-            self.fire_event(.device_prev, 0);
-        } else if (virtual_key == virtual_key_right or virtual_key == virtual_key_down) {
-            self.fire_event(.device_next, 0);
+    fn on_slider_key(widget: *Widget, key: kalymma.Key) void {
+        switch (key) {
+            .left, .down => {
+                widget.volume.current = @max(0.0, widget.volume.current - volume_step);
+
+                if (widget.volume.current == 0.0) {
+                    widget.volume.is_muted = true;
+                }
+
+                widget.invalidate();
+                widget.fire_event(.volume_changed, widget.volume.current);
+            },
+            .right, .up => {
+                widget.volume.current = @min(1.0, widget.volume.current + volume_step);
+                widget.volume.is_muted = false;
+
+                widget.invalidate();
+                widget.fire_event(.volume_changed, widget.volume.current);
+            },
+            else => {},
         }
     }
 
-    fn handle_kill_focus(self: *Widget) isize {
-        if (self.is_window_visible()) {
-            self.interaction.focus_loss_hide_time = @intCast(win32.GetTickCount64());
-            self.hide();
-            self.fire_event(.closed, 0);
+    fn on_device_key(widget: *Widget, key: kalymma.Key) void {
+        switch (key) {
+            .left, .up => widget.fire_event(.device_prev, 0),
+            .right, .down => widget.fire_event(.device_next, 0),
+            else => {},
+        }
+    }
+
+    fn on_focus_lost(widget: *Widget) void {
+        if (!widget.is_visible()) {
+            return;
         }
 
-        return 0;
+        widget.interaction.focus_loss_hide_time = @intCast(wisp.time.now_ms());
+
+        widget.hide();
+        widget.fire_event(.closed, 0);
+    }
+
+    fn apply_slider(widget: *Widget, value: f32) void {
+        assert(value >= 0.0);
+        assert(value <= 1.0);
+
+        widget.volume.current = value;
+
+        if (value > 0.0) {
+            widget.volume.is_muted = false;
+        }
+
+        widget.invalidate();
+        widget.fire_event(.volume_changed, value);
+    }
+
+    fn toggle_mute(widget: *Widget) void {
+        if (widget.volume.is_muted) {
+            widget.volume.is_muted = false;
+            widget.volume.current = widget.volume.before_mute;
+
+            widget.invalidate();
+            widget.fire_event(.mute_toggled, widget.volume.current);
+
+            return;
+        }
+
+        widget.volume.before_mute = widget.volume.current;
+        widget.volume.is_muted = true;
+
+        widget.invalidate();
+        widget.fire_event(.mute_toggled, 0.0);
     }
 };
+
+const testing = std.testing;
+
+test "a device name longer than the field is truncated rather than overflowing" {
+    var device = DeviceState{};
+
+    device.set_name("n" ** (device_name_len_max + 32));
+
+    try testing.expectEqual(device_name_len_max, device.name_len);
+    try testing.expectEqual(@as(usize, device_name_len_max), device.get_name_slice().len);
+}
+
+test "a null device name clears the field" {
+    var device = DeviceState{};
+
+    device.set_name("Microphone");
+
+    try testing.expectEqualStrings("Microphone", device.get_name_slice());
+
+    device.set_name(null);
+
+    try testing.expectEqual(@as(u32, 0), device.name_len);
+}
+
+test "the widget fits inside the surface contract" {
+    try testing.expect(Size.widget_width <= kalymma.width_max);
+    try testing.expect(Size.widget_height <= kalymma.height_max);
+}

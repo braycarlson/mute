@@ -1,127 +1,340 @@
+const std = @import("std");
+
 const nimble = @import("nimble");
+const wisp = @import("wisp");
 
-pub const HotkeyCallback = *const fn () void;
+const binding = @import("binding.zig");
+const constant = @import("constant.zig");
 
-pub fn HotkeyHandler(comptime queue_capacity: u32) type {
-    return struct {
-        const Self = @This();
-        const hotkey_len_max: u32 = 32;
+const assert = std.debug.assert;
 
-        const Hook = nimble.Keyboard(.{
-            .capacity = queue_capacity,
-            .capacity_chord = 1,
-            .capacity_command = 1,
-            .capacity_timer = 1,
-            .capacity_repeat = 1,
-            .capacity_macro = 1,
-            .capacity_toggle = 1,
-            .capacity_sequence = 1,
-        });
+const Binding = binding.Binding;
+const Client = nimble.remote.Client;
+const Key = nimble.Key;
+const Keycode = nimble.Keycode;
 
-        callback: ?HotkeyCallback = null,
-        hook: Hook = Hook.init(),
-        hotkey: [hotkey_len_max]u8 = undefined,
-        hotkey_len: u32 = 0,
-        binding_id: ?u32 = null,
+pub const Error = error{
+    BindFailed,
+    HookFailed,
+    RuntimeOpenFailed,
+    SpawnFailed,
+};
 
-        pub fn init() Self {
-            return Self{};
+pub const Combo = struct {
+    fired: bool = false,
+    held: [binding.key_max]bool = @splat(false),
+
+    pub fn clear(combo: *Combo) void {
+        combo.fired = false;
+        combo.held = @splat(false);
+
+        assert(!combo.fired);
+    }
+
+    pub fn press(combo: *Combo, value: *const Binding, code: Keycode) bool {
+        const slot = index_of(value, code) orelse return false;
+
+        assert(slot < binding.key_max);
+
+        combo.held[slot] = true;
+
+        if (combo.fired) {
+            return false;
         }
 
-        pub fn deinit(self: *Self) void {
-            self.remove();
+        if (!combo.is_complete(value)) {
+            return false;
         }
 
-        pub fn set_callback(self: *Self, callback: HotkeyCallback) void {
-            self.callback = callback;
+        combo.fired = true;
+
+        return true;
+    }
+
+    pub fn release(combo: *Combo, value: *const Binding, code: Keycode) void {
+        const slot = index_of(value, code) orelse return;
+
+        assert(slot < binding.key_max);
+
+        combo.held[slot] = false;
+        combo.fired = false;
+    }
+
+    pub fn is_complete(combo: *const Combo, value: *const Binding) bool {
+        assert(value.key_count > 0);
+        assert(value.key_count <= binding.key_max);
+
+        var index: u32 = 0;
+
+        while (index < value.key_count) : (index += 1) {
+            assert(index < binding.key_max);
+
+            if (!combo.held[index]) return false;
         }
 
-        pub fn set_hotkey(self: *Self, hotkey: ?[]const u8) void {
-            self.unregister_binding();
+        return true;
+    }
 
-            if (hotkey) |keys| {
-                if (keys.len > 0 and keys.len <= hotkey_len_max) {
-                    @memcpy(self.hotkey[0..keys.len], keys);
-                    self.hotkey_len = @intCast(keys.len);
-                    self.register_binding();
-                    return;
-                }
-            }
+    fn index_of(value: *const Binding, code: Keycode) ?u32 {
+        assert(value.key_count <= binding.key_max);
 
-            self.hotkey_len = 0;
+        var index: u32 = 0;
+
+        while (index < value.key_count) : (index += 1) {
+            assert(index < binding.key_max);
+
+            if (value.keys[index] == code) return index;
         }
 
-        pub fn install(self: *Self) !void {
-            try self.hook.start();
+        return null;
+    }
+};
+
+pub const InputThread = struct {
+    active: ?Binding,
+    identifier: ?u32,
+    client: Client,
+
+    pub fn init() InputThread {
+        return InputThread{ .active = null, .identifier = null, .client = .{} };
+    }
+
+    pub fn deinit(thread: *InputThread) void {
+        thread.stop();
+        thread.active = null;
+
+        assert(!thread.is_bound());
+    }
+
+    pub fn bind(thread: *InputThread, value: *const Binding) Error!void {
+        assert(value.key_count > 0);
+
+        thread.active = value.*;
+
+        if (!thread.client.is_connected()) {
+            return;
         }
 
-        pub fn remove(self: *Self) void {
-            self.unregister_binding();
-            self.hook.stop();
+        thread.rebind() catch {
+            thread.active = null;
+
+            return Error.BindFailed;
+        };
+
+        assert(thread.is_bound());
+    }
+
+    pub fn unbind(thread: *InputThread) void {
+        if (thread.identifier) |identifier| {
+            thread.client.unbind(identifier);
         }
 
-        pub fn is_running(self: *Self) bool {
-            return self.hook.is_running();
+        thread.active = null;
+        thread.identifier = null;
+    }
+
+    pub fn is_bound(thread: *const InputThread) bool {
+        return thread.active != null;
+    }
+
+    pub fn is_running(thread: *const InputThread) bool {
+        return thread.client.is_connected();
+    }
+
+    pub fn start(thread: *InputThread) Error!void {
+        thread.client.connect() catch {
+            return Error.RuntimeOpenFailed;
+        };
+
+        errdefer thread.client.disconnect();
+
+        if (thread.active != null) {
+            try thread.rebind();
+        }
+    }
+
+    pub fn stop(thread: *InputThread) void {
+        thread.client.disconnect();
+
+        thread.identifier = null;
+
+        assert(!thread.is_running());
+    }
+
+    pub fn refresh(thread: *InputThread) Error!void {
+        if (thread.is_running()) {
+            return;
         }
 
-        fn register_binding(self: *Self) void {
-            if (self.hotkey_len == 0) {
-                return;
-            }
+        thread.stop();
 
-            if (self.binding_id != null) {
-                return;
-            }
+        try thread.start();
+    }
 
-            const keys = self.hotkey[0..self.hotkey_len];
+    fn rebind(thread: *InputThread) Error!void {
+        assert(thread.active != null);
+        assert(thread.client.is_connected());
 
-            if (keys.len == 1) {
-                self.binding_id = self.hook.registry.register(
-                    keys[0],
-                    .{},
-                    invoke_callback,
-                    self,
-                    .{},
-                ) catch null;
-            } else {
-                self.binding_id = self.hook.chord_registry.register(
-                    keys,
-                    invoke_callback_chord,
-                    self,
-                    .{},
-                ) catch null;
-            }
+        const value = &thread.active.?;
+
+        if (thread.identifier) |identifier| {
+            thread.client.unbind(identifier);
+
+            thread.identifier = null;
         }
 
-        fn unregister_binding(self: *Self) void {
-            if (self.binding_id) |id| {
-                if (self.hotkey_len == 1) {
-                    self.hook.registry.unregister(id) catch {};
-                } else {
-                    self.hook.chord_registry.unregister(id) catch {};
-                }
-                self.binding_id = null;
-            }
+        if (value.is_chord()) {
+            thread.identifier = thread.client.bind_chord(
+                value.to_keys(),
+                .{ .consume = true },
+                on_trigger,
+                thread,
+            ) catch return Error.BindFailed;
+
+            return;
         }
 
-        fn invoke_callback(context: *anyopaque, _: *const nimble.Key) nimble.Response {
-            const handler: *Self = @ptrCast(@alignCast(context));
+        thread.identifier = thread.client.bind_key(
+            value.trigger(),
+            value.modifiers,
+            .{ .consume = true },
+            on_trigger,
+            thread,
+        ) catch return Error.BindFailed;
+    }
+};
 
-            if (handler.callback) |callback| {
-                callback();
-            }
+fn on_trigger(_: ?*anyopaque, _: ?*const Key) void {
+    _ = wisp.loop.post(constant.Message.toggle);
+}
 
-            return .consume;
-        }
+const testing = std.testing;
 
-        fn invoke_callback_chord(context: *anyopaque) nimble.Response {
-            const handler: *Self = @ptrCast(@alignCast(context));
+test "an input thread starts unbound and disconnected" {
+    var input = InputThread.init();
+    defer input.deinit();
 
-            if (handler.callback) |callback| {
-                callback();
-            }
+    try testing.expect(!input.is_bound());
+    try testing.expect(!input.is_running());
+}
 
-            return .consume;
-        }
-    };
+test "stopping an unstarted input thread is inert" {
+    var input = InputThread.init();
+    defer input.deinit();
+
+    input.stop();
+
+    try testing.expect(!input.is_running());
+}
+
+test "binding while disconnected stores the binding for the next connect" {
+    var input = InputThread.init();
+    defer input.deinit();
+
+    const value = try Binding.parse("Ctrl+Alt+M");
+
+    try input.bind(&value);
+
+    try testing.expect(input.is_bound());
+    try testing.expect(input.identifier == null);
+}
+
+test "a multi key binding is retained as a chord" {
+    var input = InputThread.init();
+    defer input.deinit();
+
+    const value = try Binding.parse("A+B");
+
+    try input.bind(&value);
+
+    try testing.expect(input.is_bound());
+    try testing.expect(input.active.?.is_chord());
+}
+
+test "a combo fires once when every key is held, in either order" {
+    const value = try Binding.parse("PageUp+PageDown");
+
+    var forward = Combo{};
+
+    try testing.expect(!forward.press(&value, .page_up));
+    try testing.expect(forward.press(&value, .page_down));
+
+    var reverse = Combo{};
+
+    try testing.expect(!reverse.press(&value, .page_down));
+    try testing.expect(reverse.press(&value, .page_up));
+}
+
+test "a repeated key never re-fires or breaks a combo in progress" {
+    const value = try Binding.parse("PageUp+PageDown");
+
+    var combo = Combo{};
+
+    var beat: u32 = 0;
+
+    while (beat < 7) : (beat += 1) {
+        try testing.expect(!combo.press(&value, .page_up));
+    }
+
+    try testing.expect(combo.press(&value, .page_down));
+
+    beat = 0;
+
+    while (beat < 5) : (beat += 1) {
+        try testing.expect(!combo.press(&value, .page_down));
+        try testing.expect(!combo.press(&value, .page_up));
+    }
+}
+
+test "a combo re-arms once a key is released" {
+    const value = try Binding.parse("PageUp+PageDown");
+
+    var combo = Combo{};
+
+    _ = combo.press(&value, .page_up);
+
+    try testing.expect(combo.press(&value, .page_down));
+
+    combo.release(&value, .page_down);
+
+    try testing.expect(combo.press(&value, .page_down));
+}
+
+test "a key outside the combo is ignored entirely" {
+    const value = try Binding.parse("PageUp+PageDown");
+
+    var combo = Combo{};
+
+    try testing.expect(!combo.press(&value, .a));
+    try testing.expect(!combo.press(&value, .page_up));
+    try testing.expect(!combo.press(&value, .escape));
+    try testing.expect(combo.press(&value, .page_down));
+}
+
+test "rebinding swaps the active binding" {
+    var input = InputThread.init();
+    defer input.deinit();
+
+    const first = try Binding.parse("PageUp+PageDown");
+    const second = try Binding.parse("Ctrl+Alt+M");
+
+    try input.bind(&first);
+    try input.bind(&second);
+
+    try testing.expect(input.is_bound());
+    try testing.expectEqual(Keycode.m, input.active.?.trigger());
+}
+
+test "unbinding clears the active binding" {
+    var input = InputThread.init();
+    defer input.deinit();
+
+    const value = try Binding.parse("Ctrl+Alt+M");
+
+    try input.bind(&value);
+
+    input.unbind();
+    input.unbind();
+
+    try testing.expect(!input.is_bound());
 }

@@ -1,25 +1,3 @@
-# mute
 .zig-cache/
 zig-out/
 zig-pkg/
-
-# Binaries for programs and plugins
-*.exe
-*.exe~
-*.dll
-*.res
-*.so
-*.dylib
-
-# Test binary, built with `go test -c`
-*.test
-
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
-
-# Configuration
-*.ini
-
-# Logging
-*.txt
-log/

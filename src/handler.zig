@@ -2,150 +2,194 @@ const std = @import("std");
 
 const wisp = @import("wisp");
 
-const constant = @import("constant.zig");
-const DeviceEvent = @import("device/notifier.zig").DeviceEvent;
-const Mode = @import("mode.zig").Mode;
+const assert = std.debug.assert;
 
-const App = wisp.App;
+const Bus = wisp.Bus;
 const Event = wisp.Event;
 const Response = wisp.Response;
 
-pub const Dispatcher = struct {
-    on_config_reload: *const fn () void,
-    on_device_event: *const fn (DeviceEvent) void,
-    on_exit: *const fn () void,
-    on_init: *const fn () void,
-    on_menu_show: *const fn () void,
-    on_open_settings: *const fn () void,
-    on_shutdown: *const fn () void,
-    on_timer_tick: *const fn (u32) void,
-    on_toggle_state: *const fn () void,
-    on_tray_click: *const fn () void,
-};
-
-pub fn EventHandler(comptime mode: Mode) type {
-    _ = mode;
-
+pub fn EventHandlerType(comptime Owner: type) type {
     return struct {
-        const Self = @This();
+        pub fn register(bus: *Bus, owner: *Owner) void {
+            _ = bus.on(.app_init, on_app_init, owner);
+            _ = bus.on(.app_shutdown, on_app_shutdown, owner);
+            _ = bus.on(.custom, on_custom, owner);
+            _ = bus.on(.icon_change, on_icon_change, owner);
+            _ = bus.on(.menu_select, on_menu_select, owner);
+            _ = bus.on(.menu_show, on_menu_show, owner);
+            _ = bus.on(.timer_tick, on_timer_tick, owner);
+            _ = bus.on(.tray_left_click, on_tray_click, owner);
 
-        app: *App,
-        dispatcher: *const Dispatcher,
-
-        pub fn init(app: *App, dispatcher: *const Dispatcher) Self {
-            return Self{
-                .app = app,
-                .dispatcher = dispatcher,
-            };
+            assert(bus.handler_count() > 0);
         }
 
-        pub fn register(self: *Self) void {
-            _ = self.app.event_bus().on(.app_init, on_app_init, self);
-            _ = self.app.event_bus().on(.app_shutdown, on_app_shutdown, self);
-            _ = self.app.event_bus().on(.icon_change, on_icon_change, self);
-            _ = self.app.event_bus().on(.menu_select, on_menu_select, self);
-            _ = self.app.event_bus().on(.menu_show, on_menu_show, self);
-            _ = self.app.event_bus().on(.taskbar_restart, on_taskbar_restart, self);
-            _ = self.app.event_bus().on(.timer_tick, on_timer_tick, self);
-            _ = self.app.event_bus().on(.tray_left_click, on_tray_click, self);
-            _ = self.app.event_bus().on(.window_message, on_window_message, self);
-        }
-
-        fn on_app_init(event: *const Event, context: ?*anyopaque) Response {
-            _ = event;
-
-            const handler: *Self = @ptrCast(@alignCast(context.?));
-            handler.dispatcher.on_init();
+        fn on_app_init(_: *const Event, context: ?*anyopaque) Response {
+            owner_of(context).on_init();
 
             return .pass;
         }
 
-        fn on_app_shutdown(event: *const Event, context: ?*anyopaque) Response {
-            _ = event;
+        fn on_app_shutdown(_: *const Event, context: ?*anyopaque) Response {
+            owner_of(context).on_shutdown();
 
-            const handler: *Self = @ptrCast(@alignCast(context.?));
-            handler.dispatcher.on_shutdown();
+            return .pass;
+        }
+
+        fn on_custom(event: *const Event, context: ?*anyopaque) Response {
+            const payload = event.payload.custom;
+
+            owner_of(context).on_custom(payload.code);
 
             return .pass;
         }
 
         fn on_icon_change(event: *const Event, context: ?*anyopaque) Response {
-            const handler: *Self = @ptrCast(@alignCast(context.?));
-            const data = event.payload.icon_change;
+            const payload = event.payload.icon_change;
 
-            const icon = handler.app.get_icon().get(data.name) orelse return .pass;
-
-            handler.app.get_tray().set_icon(icon) catch {};
+            owner_of(context).on_icon_change(payload.name);
 
             return .pass;
         }
 
         fn on_menu_select(event: *const Event, context: ?*anyopaque) Response {
-            const handler: *Self = @ptrCast(@alignCast(context.?));
-            const data = event.payload.menu_select;
+            const payload = event.payload.menu_select;
 
-            handle_command(handler, data.id);
-
-            return .pass;
-        }
-
-        fn on_menu_show(event: *const Event, context: ?*anyopaque) Response {
-            _ = event;
-
-            const handler: *Self = @ptrCast(@alignCast(context.?));
-            handler.dispatcher.on_menu_show();
+            owner_of(context).on_menu_select(payload.id);
 
             return .pass;
         }
 
-        fn on_taskbar_restart(event: *const Event, context: ?*anyopaque) Response {
-            _ = event;
-            _ = context;
+        fn on_menu_show(_: *const Event, context: ?*anyopaque) Response {
+            owner_of(context).on_menu_show();
 
             return .pass;
         }
 
         fn on_timer_tick(event: *const Event, context: ?*anyopaque) Response {
-            const handler: *Self = @ptrCast(@alignCast(context.?));
-            const data = event.payload.timer_tick;
+            const payload = event.payload.timer_tick;
 
-            handler.dispatcher.on_timer_tick(data.id);
-
-            return .pass;
-        }
-
-        fn on_tray_click(event: *const Event, context: ?*anyopaque) Response {
-            _ = event;
-
-            const handler: *Self = @ptrCast(@alignCast(context.?));
-            handler.dispatcher.on_tray_click();
+            owner_of(context).on_timer_tick(payload.id);
 
             return .pass;
         }
 
-        fn on_window_message(event: *const Event, context: ?*anyopaque) Response {
-            const handler: *Self = @ptrCast(@alignCast(context.?));
-            const data = event.payload.window_message;
+        fn on_tray_click(_: *const Event, context: ?*anyopaque) Response {
+            owner_of(context).on_tray_click();
 
-            switch (data.message) {
-                constant.wm_config_reload => {
-                    handler.dispatcher.on_config_reload();
-                    return .handled;
-                },
-                constant.wm_device_event => {
-                    const device_event: DeviceEvent = @enumFromInt(data.wparam);
-                    handler.dispatcher.on_device_event(device_event);
-                    return .handled;
-                },
-                else => return .pass,
-            }
+            return .pass;
         }
 
-        fn handle_command(handler: *Self, command: u32) void {
-            switch (command) {
-                constant.Menu.exit => handler.dispatcher.on_exit(),
-                else => {},
-            }
+        fn owner_of(context: ?*anyopaque) *Owner {
+            assert(context != null);
+
+            const result: *Owner = @ptrCast(@alignCast(context.?));
+
+            return result;
         }
     };
+}
+
+const testing = std.testing;
+
+const Recorder = struct {
+    clicks: u32 = 0,
+    codes: u32 = 0,
+    icons: u32 = 0,
+    inits: u32 = 0,
+    selections: u32 = 0,
+    shows: u32 = 0,
+    shutdowns: u32 = 0,
+    ticks: u32 = 0,
+    last_code: u32 = 0,
+    last_id: u32 = 0,
+
+    pub fn on_custom(recorder: *Recorder, code: u32) void {
+        recorder.codes += 1;
+        recorder.last_code = code;
+    }
+
+    pub fn on_icon_change(recorder: *Recorder, name: []const u8) void {
+        assert(name.len > 0);
+
+        recorder.icons += 1;
+    }
+
+    pub fn on_init(recorder: *Recorder) void {
+        recorder.inits += 1;
+    }
+
+    pub fn on_menu_select(recorder: *Recorder, id: u32) void {
+        recorder.selections += 1;
+        recorder.last_id = id;
+    }
+
+    pub fn on_menu_show(recorder: *Recorder) void {
+        recorder.shows += 1;
+    }
+
+    pub fn on_shutdown(recorder: *Recorder) void {
+        recorder.shutdowns += 1;
+    }
+
+    pub fn on_timer_tick(recorder: *Recorder, id: u32) void {
+        recorder.ticks += 1;
+        recorder.last_id = id;
+    }
+
+    pub fn on_tray_click(recorder: *Recorder) void {
+        recorder.clicks += 1;
+    }
+};
+
+test "every registered event reaches its owner method" {
+    var bus = Bus.init();
+    defer bus.deinit();
+
+    var recorder = Recorder{};
+
+    EventHandlerType(Recorder).register(&bus, &recorder);
+
+    const started = Event.app_init();
+    const posted = Event.custom(7, null);
+    const changed = Event.icon_change("active");
+    const selected = Event.menu_select(2, false);
+    const shown = Event.menu_show();
+    const ticked = Event.timer_tick(1, 0);
+    const clicked = Event.tray_left_click();
+    const stopped = Event.app_shutdown();
+
+    _ = bus.emit(&started);
+    _ = bus.emit(&posted);
+    _ = bus.emit(&changed);
+    _ = bus.emit(&selected);
+    _ = bus.emit(&shown);
+    _ = bus.emit(&ticked);
+    _ = bus.emit(&clicked);
+    _ = bus.emit(&stopped);
+
+    try testing.expectEqual(@as(u32, 1), recorder.inits);
+    try testing.expectEqual(@as(u32, 1), recorder.codes);
+    try testing.expectEqual(@as(u32, 7), recorder.last_code);
+    try testing.expectEqual(@as(u32, 1), recorder.icons);
+    try testing.expectEqual(@as(u32, 1), recorder.selections);
+    try testing.expectEqual(@as(u32, 1), recorder.shows);
+    try testing.expectEqual(@as(u32, 1), recorder.ticks);
+    try testing.expectEqual(@as(u32, 1), recorder.clicks);
+    try testing.expectEqual(@as(u32, 1), recorder.shutdowns);
+}
+
+test "an unregistered event leaves the owner untouched" {
+    var bus = Bus.init();
+    defer bus.deinit();
+
+    var recorder = Recorder{};
+
+    EventHandlerType(Recorder).register(&bus, &recorder);
+
+    const clicked = Event.tray_right_click();
+
+    _ = bus.emit(&clicked);
+
+    try testing.expectEqual(@as(u32, 0), recorder.codes);
+    try testing.expectEqual(@as(u32, 0), recorder.clicks);
 }

@@ -1,64 +1,89 @@
-name: Build Executable for Release
+name: compile
+
 on:
-  release:
-    types: [created]
+    release:
+        types: [created]
 
 permissions:
-  contents: write
+    contents: write
 
 jobs:
-  build:
-    runs-on: windows-latest
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Setup Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.16.0
-
-      - name: Get Version from Release Tag
-        id: version
-        shell: bash
-        run: |
-          RELEASE_TAG="${{ github.event.release.tag_name }}"
-
-      - name: Build Zig Executable
-        shell: bash
-        run: |
-          mkdir -p output
-          zig build -Dtarget=x86_64-windows -Doptimize=ReleaseSmall
-          cp zig-out/bin/mute.exe output/mute.exe
-          cp zig-out/bin/deafen.exe output/deafen.exe
-
-      - name: Verify Executables Exist
-        shell: bash
-        run: |
-          for FILE in output/mute.exe output/deafen.exe; do
-            if [ -f "$FILE" ]; then
-              echo "Executable exists: $FILE"
-            else
-              echo "Executable not found: $FILE"
-              exit 1
-            fi
-          done
-
-      - name: Upload Executables as Artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: executable-windows
-          path: |
-            output/mute.exe
-            output/deafen.exe
-          retention-days: 1
-
-      - name: Upload Executables to Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ github.event.release.tag_name }}
-          files: |
-            output/mute.exe
-            output/deafen.exe
+    compile:
+        name: ${{ matrix.target }}
+        runs-on: ubuntu-latest
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - target: x86_64-linux-gnu
+                      extension: ""
+                      suffix: linux
+                    - target: x86_64-windows-gnu
+                      extension: .exe
+                      suffix: windows
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  path: mute
+            - uses: actions/checkout@v6
+              with:
+                  repository: braycarlson/kalymma
+                  path: kalymma
+            - uses: actions/checkout@v6
+              with:
+                  repository: braycarlson/mantra
+                  path: mantra
+            - uses: actions/checkout@v6
+              with:
+                  repository: braycarlson/nimble
+                  path: nimble
+            - uses: actions/checkout@v6
+              with:
+                  repository: braycarlson/wisp
+                  path: wisp
+            - uses: mlugg/setup-zig@v2
+              with:
+                  version: 0.16.0
+
+            - name: Build the executables
+              shell: bash
+              working-directory: mute
+              run: |
+                  mkdir -p output
+                  zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+
+                  for NAME in mute deafen; do
+                    cp "zig-out/bin/$NAME${{ matrix.extension }}" "output/$NAME-${{ matrix.suffix }}"
+                  done
+
+            - name: Verify the executables exist
+              shell: bash
+              working-directory: mute
+              run: |
+                  for FILE in output/mute-${{ matrix.suffix }} output/deafen-${{ matrix.suffix }}; do
+                    if [ -f "$FILE" ]; then
+                      echo "Executable exists: $FILE"
+                    else
+                      echo "Executable not found: $FILE"
+                      exit 1
+                    fi
+                  done
+
+            - name: Upload the executables as artifacts
+              uses: actions/upload-artifact@v7
+              with:
+                  name: executable-${{ matrix.suffix }}
+                  path: |
+                      mute/output/mute-${{ matrix.suffix }}
+                      mute/output/deafen-${{ matrix.suffix }}
+                  retention-days: 1
+
+            - name: Upload the executables to the release
+              uses: softprops/action-gh-release@v3
+              with:
+                  tag_name: ${{ github.event.release.tag_name }}
+                  files: |
+                      mute/output/mute-${{ matrix.suffix }}
+                      mute/output/deafen-${{ matrix.suffix }}

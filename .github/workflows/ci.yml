@@ -1,0 +1,40 @@
+name: ci
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+        branches: [main]
+
+jobs:
+    ci:
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ubuntu-latest, windows-latest]
+        runs-on: ${{ matrix.os }}
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  path: mute
+            - uses: actions/checkout@v6
+              with:
+                  repository: braycarlson/kalymma
+                  path: kalymma
+            - uses: actions/checkout@v6
+              with:
+                  repository: braycarlson/mantra
+                  path: mantra
+            - uses: actions/checkout@v6
+              with:
+                  repository: braycarlson/nimble
+                  path: nimble
+            - uses: actions/checkout@v6
+              with:
+                  repository: braycarlson/wisp
+                  path: wisp
+            - uses: mlugg/setup-zig@v2
+              with:
+                  version: 0.16.0
+            - run: zig build ci --summary all
+              working-directory: mute

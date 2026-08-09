@@ -1,201 +1,56 @@
 const std = @import("std");
 
-const nimble = @import("nimble");
-const path_util = @import("path.zig");
+const wisp = @import("wisp");
 
-const keycode = nimble.keycode;
+const binding = @import("binding.zig");
 
-pub const ConfigError = error{
-    BufferTooSmall,
-    InvalidKey,
+const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
+
+const Binding = binding.Binding;
+
+pub const Error = error{
+    ContentTooLarge,
     InvalidPath,
-    InvalidSequence,
+    NotFound,
     ParseError,
-    SequenceTooLong,
+    ReadFailed,
+    WriteFailed,
 };
 
-pub const KeySequence = struct {
-    pub const len_max: u32 = 32;
+pub const file_name = "config.zon";
 
-    const key_name_len_max: u32 = 32;
-    const output_len_max: u32 = 256;
-    const iteration_max: u32 = 64;
+pub const capture_hotkey_default = "PageUp";
+pub const render_hotkey_default = "PageDown";
 
-    data: [len_max]u8 = [_]u8{0} ** len_max,
-    len: u32 = 0,
+pub const capture_volume_default: f32 = 0.7;
+pub const render_volume_default: f32 = 0.3;
 
-    pub fn init(source: []const u8) ConfigError!KeySequence {
-        if (source.len == 0) {
-            return ConfigError.InvalidSequence;
-        }
+comptime {
+    assert(file_name.len > 0);
+    assert(capture_hotkey_default.len > 0);
+    assert(render_hotkey_default.len > 0);
+    assert(!std.mem.eql(u8, capture_hotkey_default, render_hotkey_default));
+    assert(capture_volume_default >= 0.0 and capture_volume_default <= 1.0);
+    assert(render_volume_default >= 0.0 and render_volume_default <= 1.0);
+}
 
-        if (source.len > len_max) {
-            return ConfigError.SequenceTooLong;
-        }
+const eval_branch_quota: u32 = 1 << 16;
 
-        const length: u32 = @intCast(source.len);
+fn default_binding(comptime text: []const u8) Binding {
+    const result = comptime parsed: {
+        @setEvalBranchQuota(eval_branch_quota);
 
-        std.debug.assert(length > 0);
-        std.debug.assert(length <= len_max);
+        break :parsed Binding.parse(text) catch @compileError("mute: invalid default binding");
+    };
 
-        var result = KeySequence{};
-        var index: u32 = 0;
-
-        while (index < length) : (index += 1) {
-            std.debug.assert(index < len_max);
-            std.debug.assert(index < length);
-
-            result.data[index] = to_virtual_key(source[index]);
-        }
-
-        result.len = length;
-
-        std.debug.assert(result.len == length);
-        std.debug.assert(result.len > 0);
-        std.debug.assert(result.len <= len_max);
-
-        return result;
-    }
-
-    pub fn from_key_name(input: []const u8) ConfigError!KeySequence {
-        if (input.len == 0) {
-            return ConfigError.InvalidSequence;
-        }
-
-        std.debug.assert(input.len <= output_len_max);
-
-        var result = KeySequence{};
-        var index: u32 = 0;
-
-        var iterator = std.mem.splitScalar(u8, input, '+');
-        var iteration: u32 = 0;
-
-        while (iteration < iteration_max) : (iteration += 1) {
-            std.debug.assert(iteration < iteration_max);
-
-            const part = iterator.next() orelse break;
-
-            if (index >= len_max) {
-                return ConfigError.SequenceTooLong;
-            }
-
-            std.debug.assert(index < len_max);
-
-            const trimmed = std.mem.trim(u8, part, " ");
-
-            if (trimmed.len == 0) {
-                continue;
-            }
-
-            var lower: [key_name_len_max]u8 = undefined;
-            const len: u32 = @intCast(@min(trimmed.len, key_name_len_max));
-
-            std.debug.assert(len <= key_name_len_max);
-
-            var char_index: u32 = 0;
-            while (char_index < len) : (char_index += 1) {
-                std.debug.assert(char_index < key_name_len_max);
-                std.debug.assert(char_index < len);
-
-                lower[char_index] = std.ascii.toLower(trimmed[char_index]);
-            }
-
-            std.debug.assert(char_index == len);
-
-            const key = keycode.from_string(lower[0..len]) orelse {
-                return ConfigError.InvalidKey;
-            };
-
-            std.debug.assert(keycode.is_valid(key));
-
-            result.data[index] = key;
-            index += 1;
-        }
-
-        if (index == 0) {
-            return ConfigError.InvalidSequence;
-        }
-
-        result.len = index;
-
-        std.debug.assert(result.len > 0);
-        std.debug.assert(result.len <= len_max);
-
-        return result;
-    }
-
-    fn to_virtual_key(character: u8) u8 {
-        if (character >= 'a' and character <= 'z') {
-            return character - ('a' - 'A');
-        }
-
-        if (character >= 'A' and character <= 'Z') {
-            return character;
-        }
-
-        if (character >= '0' and character <= '9') {
-            return character;
-        }
-
-        return character;
-    }
-
-    pub fn to_key_name(self: *const KeySequence, allocator: std.mem.Allocator) ![]u8 {
-        std.debug.assert(self.len <= len_max);
-
-        var buffer: [output_len_max]u8 = undefined;
-        var writer = std.Io.Writer.fixed(&buffer);
-
-        var index: u32 = 0;
-        while (index < self.len) : (index += 1) {
-            std.debug.assert(index < len_max);
-            std.debug.assert(index < self.len);
-
-            if (index > 0) {
-                try writer.writeAll("+");
-            }
-
-            const value: u8 = self.data[index];
-
-            std.debug.assert(keycode.is_valid(value));
-
-            if (keycode.to_string(value)) |name| {
-                try writer.writeAll(name);
-            } else {
-                if (value >= 'A' and value <= 'Z') {
-                    try writer.writeByte(value);
-                    continue;
-                }
-
-                if (value >= '0' and value <= '9') {
-                    try writer.writeByte(value);
-                    continue;
-                }
-
-                try writer.print("0x{X:0>2}", .{value});
-            }
-        }
-
-        std.debug.assert(index == self.len);
-
-        const written = writer.buffered();
-
-        std.debug.assert(written.len <= output_len_max);
-
-        return try allocator.dupe(u8, written);
-    }
-
-    pub fn to_slice(self: *const KeySequence) []const u8 {
-        std.debug.assert(self.len <= len_max);
-
-        return self.data[0..self.len];
-    }
-};
+    return result;
+}
 
 const ZonDevice = struct {
     hotkey: ?[]const u8 = null,
     name: ?[]const u8 = null,
-    volume: f32 = 0.5,
+    volume: ?f32 = null,
 };
 
 const ZonConfig = struct {
@@ -206,333 +61,450 @@ const ZonConfig = struct {
 pub const DeviceConfig = struct {
     pub const name_len_max: u32 = 256;
 
-    hotkey: KeySequence = undefined,
+    hotkey: Binding = default_binding(capture_hotkey_default),
     name: [name_len_max]u8 = [_]u8{0} ** name_len_max,
     name_len: u32 = 0,
-    volume: f32 = 0.5,
+    volume: f32 = capture_volume_default,
 
-    pub fn get_hotkey(self: *const DeviceConfig) []const u8 {
-        std.debug.assert(self.hotkey.len <= KeySequence.len_max);
+    pub fn get_hotkey(config: *const DeviceConfig) *const Binding {
+        assert(config.hotkey.key_count > 0);
 
-        return self.hotkey.to_slice();
+        return &config.hotkey;
     }
 
-    pub fn get_name(self: *const DeviceConfig) ?[]const u8 {
-        std.debug.assert(self.name_len <= name_len_max);
+    pub fn get_name(config: *const DeviceConfig) ?[]const u8 {
+        assert(config.name_len <= name_len_max);
 
-        if (self.name_len == 0) {
+        if (config.name_len == 0) {
             return null;
         }
 
-        return self.name[0..self.name_len];
+        return config.name[0..config.name_len];
     }
 
-    pub fn set_name(self: *DeviceConfig, name: []const u8) void {
-        std.debug.assert(name.len <= name_len_max);
-
+    pub fn set_name(config: *DeviceConfig, name: []const u8) void {
         const length: u32 = @intCast(@min(name.len, name_len_max));
 
-        @memcpy(self.name[0..length], name[0..length]);
-        self.name_len = length;
+        @memcpy(config.name[0..length], name[0..length]);
+        config.name_len = length;
 
-        std.debug.assert(self.name_len == length);
-        std.debug.assert(self.name_len <= name_len_max);
+        assert(config.name_len == length);
+        assert(config.name_len <= name_len_max);
     }
 };
 
 pub const Config = struct {
     pub const content_len_max: u32 = 1024 * 64;
     pub const path_len_max: u32 = 512;
-    pub const path_max: u32 = path_len_max;
 
     const write_buffer_len_max: u32 = 4096;
 
-    allocator: std.mem.Allocator,
+    gpa: Allocator,
     capture: DeviceConfig = .{
-        .hotkey = default_hotkey(),
-        .volume = 0.7,
+        .hotkey = default_binding(capture_hotkey_default),
+        .volume = capture_volume_default,
     },
     config_path: [path_len_max]u8 = [_]u8{0} ** path_len_max,
     config_path_len: u32 = 0,
     io: std.Io,
     is_loaded_from_file: bool = false,
     render: DeviceConfig = .{
-        .hotkey = default_hotkey(),
-        .volume = 0.2,
+        .hotkey = default_binding(render_hotkey_default),
+        .volume = render_volume_default,
     },
 
-    fn default_hotkey() KeySequence {
-        var sequence = KeySequence{};
-        sequence.data[0] = keycode.prior;
-        sequence.data[1] = keycode.next;
-        sequence.len = 2;
-
-        return sequence;
-    }
-
-    pub fn init(allocator: std.mem.Allocator, io: std.Io) Config {
+    pub fn init(gpa: Allocator, io: std.Io) Config {
         return Config{
-            .allocator = allocator,
+            .gpa = gpa,
             .io = io,
         };
     }
 
-    pub fn deinit(self: *Config) void {
-        std.debug.assert(self.config_path_len <= path_len_max);
-        self.config_path_len = 0;
+    pub fn deinit(config: *Config) void {
+        assert(config.config_path_len <= path_len_max);
+
+        config.config_path_len = 0;
     }
 
-    fn load_config_path(self: *Config, app_name: []const u8) !void {
-        std.debug.assert(app_name.len > 0);
+    pub fn load(gpa: Allocator, io: std.Io, app_name: []const u8) Error!Config {
+        assert(app_name.len > 0);
 
-        var appdata_buffer: [path_util.path_length_max]u8 = undefined;
-
-        const base = path_util.get_appdata_path(&appdata_buffer, app_name) catch {
-            return ConfigError.InvalidPath;
-        };
-
-        std.debug.assert(base.len > 0);
-
-        const full_path = path_util.join_path(&self.config_path, base, "config.zon") orelse {
-            return ConfigError.InvalidPath;
-        };
-
-        self.config_path_len = @intCast(full_path.len);
-
-        std.debug.assert(self.config_path_len > 0);
-        std.debug.assert(self.config_path_len <= path_len_max);
-    }
-
-    fn load_from_file(self: *Config) !void {
-        std.debug.assert(self.config_path_len > 0);
-        std.debug.assert(self.config_path_len <= path_len_max);
-
-        const path = self.config_path[0..self.config_path_len];
-
-        const file = std.Io.Dir.openFileAbsolute(self.io, path, .{}) catch |err| {
-            if (err == error.FileNotFound) {
-                self.is_loaded_from_file = true;
-                try self.save();
-                return;
-            }
-
-            return err;
-        };
-        defer file.close(self.io);
-
-        var buffer: [content_len_max]u8 = undefined;
-
-        const count = file.readPositionalAll(self.io, &buffer, 0) catch {
-            return ConfigError.ParseError;
-        };
-
-        if (count == 0) {
-            return ConfigError.ParseError;
-        }
-
-        std.debug.assert(count > 0);
-        std.debug.assert(count <= content_len_max);
-
-        buffer[count] = 0;
-        const slice: [:0]const u8 = buffer[0..count :0];
-
-        try self.parse(slice);
-        self.is_loaded_from_file = true;
-    }
-
-    fn parse_device(device: ZonDevice, volume_default: f32) DeviceConfig {
-        std.debug.assert(volume_default >= 0.0);
-        std.debug.assert(volume_default <= 1.0);
-
-        var result = DeviceConfig{
-            .volume = std.math.clamp(device.volume, 0.0, 1.0),
-            .hotkey = default_hotkey(),
-        };
-
-        if (result.volume == 0.5) {
-            result.volume = volume_default;
-        }
-
-        std.debug.assert(result.volume >= 0.0);
-        std.debug.assert(result.volume <= 1.0);
-
-        if (device.name) |name| {
-            std.debug.assert(name.len <= DeviceConfig.name_len_max);
-            result.set_name(name);
-        }
-
-        if (device.hotkey) |hotkey| {
-            result.hotkey = KeySequence.from_key_name(hotkey) catch result.hotkey;
-        }
-
-        return result;
-    }
-
-    fn to_zon_config(self: *Config) !ZonConfig {
-        std.debug.assert(self.config_path_len <= path_len_max);
-
-        const capture_hotkey = try self.capture.hotkey.to_key_name(self.allocator);
-        errdefer self.allocator.free(capture_hotkey);
-
-        const render_hotkey = try self.render.hotkey.to_key_name(self.allocator);
-
-        return .{
-            .capture = .{
-                .hotkey = capture_hotkey,
-                .name = self.capture.get_name(),
-                .volume = self.capture.volume,
-            },
-            .render = .{
-                .hotkey = render_hotkey,
-                .name = self.render.get_name(),
-                .volume = self.render.volume,
-            },
-        };
-    }
-
-    fn write_config_file(self: *Config, path: []const u8) !void {
-        std.debug.assert(path.len > 0);
-        std.debug.assert(path.len <= path_len_max);
-
-        const file = try std.Io.Dir.createFileAbsolute(self.io, path, .{});
-        defer file.close(self.io);
-
-        var allocating: std.Io.Writer.Allocating = .init(self.allocator);
-        defer allocating.deinit();
-
-        const zon = try self.to_zon_config();
-
-        defer self.allocator.free(zon.capture.hotkey.?);
-        defer self.allocator.free(zon.render.hotkey.?);
-
-        try std.zon.stringify.serialize(zon, .{}, &allocating.writer);
-
-        var buffer: [write_buffer_len_max]u8 = undefined;
-        var writer = file.writer(self.io, &buffer);
-
-        try writer.interface.writeAll(allocating.writer.buffered());
-        try writer.interface.flush();
-    }
-
-    pub fn get_config_path(self: *const Config) ?[]const u8 {
-        std.debug.assert(self.config_path_len <= path_len_max);
-
-        if (self.config_path_len == 0) {
-            return null;
-        }
-
-        return self.config_path[0..self.config_path_len];
-    }
-
-    pub fn load(allocator: std.mem.Allocator, io: std.Io, app_name: []const u8) !Config {
-        std.debug.assert(app_name.len > 0);
-
-        var config = Config.init(allocator, io);
+        var config = Config.init(gpa, io);
         errdefer config.deinit();
 
         try config.load_config_path(app_name);
         try config.load_from_file();
 
-        std.debug.assert(config.config_path_len > 0);
-        std.debug.assert(config.capture.volume >= 0.0);
-        std.debug.assert(config.capture.volume <= 1.0);
-        std.debug.assert(config.render.volume >= 0.0);
-        std.debug.assert(config.render.volume <= 1.0);
+        assert(config.config_path_len > 0);
+        assert(config.capture.volume >= 0.0 and config.capture.volume <= 1.0);
+        assert(config.render.volume >= 0.0 and config.render.volume <= 1.0);
 
         return config;
     }
 
-    pub fn parse(self: *Config, content: [:0]const u8) !void {
-        std.debug.assert(content.len > 0);
-        std.debug.assert(content.len <= content_len_max);
+    pub fn get_config_path(config: *const Config) ?[]const u8 {
+        assert(config.config_path_len <= path_len_max);
+
+        if (config.config_path_len == 0) {
+            return null;
+        }
+
+        return config.config_path[0..config.config_path_len];
+    }
+
+    pub fn parse(config: *Config, content: [:0]const u8) Error!void {
+        assert(content.len > 0);
+        assert(content.len <= content_len_max);
 
         const parsed = std.zon.parse.fromSliceAlloc(
             ZonConfig,
-            self.allocator,
+            config.gpa,
             content,
             null,
             .{},
         ) catch {
-            return ConfigError.ParseError;
+            return Error.ParseError;
         };
 
-        self.capture = parse_device(parsed.capture, 0.7);
-        self.render = parse_device(parsed.render, 0.2);
+        defer std.zon.parse.free(config.gpa, parsed);
 
-        std.debug.assert(self.capture.volume >= 0.0);
-        std.debug.assert(self.capture.volume <= 1.0);
-        std.debug.assert(self.render.volume >= 0.0);
-        std.debug.assert(self.render.volume <= 1.0);
+        config.capture = parse_device(
+            parsed.capture,
+            capture_volume_default,
+            default_binding(capture_hotkey_default),
+        );
+
+        config.render = parse_device(
+            parsed.render,
+            render_volume_default,
+            default_binding(render_hotkey_default),
+        );
+
+        assert(config.capture.volume >= 0.0 and config.capture.volume <= 1.0);
+        assert(config.render.volume >= 0.0 and config.render.volume <= 1.0);
     }
 
-    pub fn save(self: *Config) !void {
-        std.debug.assert(self.config_path_len <= path_len_max);
+    pub fn read(config: *Config, storage: *[content_len_max + 1]u8) Error![:0]const u8 {
+        const path = config.get_config_path() orelse {
+            return Error.InvalidPath;
+        };
 
-        if (!self.is_loaded_from_file) {
+        const file = std.Io.Dir.openFileAbsolute(config.io, path, .{}) catch |err| switch (err) {
+            error.FileNotFound => return Error.NotFound,
+            else => return Error.ReadFailed,
+        };
+
+        defer file.close(config.io);
+
+        const count = file.readPositionalAll(config.io, storage, 0) catch {
+            return Error.ReadFailed;
+        };
+
+        if (count == 0) {
+            return Error.ParseError;
+        }
+
+        if (count > content_len_max) {
+            return Error.ContentTooLarge;
+        }
+
+        assert(count > 0);
+        assert(count <= content_len_max);
+
+        storage[count] = 0;
+
+        return storage[0..count :0];
+    }
+
+    pub fn save(config: *Config) Error!void {
+        assert(config.config_path_len <= path_len_max);
+
+        if (!config.is_loaded_from_file) {
             return;
         }
 
-        std.debug.assert(self.config_path_len > 0);
-        std.debug.assert(self.config_path_len <= path_len_max);
+        assert(config.config_path_len > 0);
 
-        const path = self.config_path[0..self.config_path_len];
+        const path = config.config_path[0..config.config_path_len];
 
-        std.debug.assert(path.len > 0);
+        try config.create_directory(path);
+        try config.write_config_file(path);
+    }
 
-        try path_util.ensure_directory_exists(self.io, path);
-        try self.write_config_file(path);
+    fn create_directory(config: *Config, path: []const u8) Error!void {
+        assert(path.len > 0);
+
+        const directory = std.fs.path.dirname(path) orelse {
+            return Error.InvalidPath;
+        };
+
+        assert(directory.len > 0);
+        assert(directory.len < path.len);
+
+        std.Io.Dir.cwd().createDirPath(config.io, directory) catch {
+            return Error.WriteFailed;
+        };
+    }
+
+    fn load_config_path(config: *Config, app_name: []const u8) Error!void {
+        assert(app_name.len > 0);
+
+        var directory_buffer: [path_len_max]u8 = undefined;
+
+        const directory = wisp.paths.config_dir(&directory_buffer, app_name) catch {
+            return Error.InvalidPath;
+        };
+
+        assert(directory.len > 0);
+
+        const full = std.fmt.bufPrint(
+            &config.config_path,
+            "{s}{c}{s}",
+            .{ directory, std.fs.path.sep, file_name },
+        ) catch {
+            return Error.InvalidPath;
+        };
+
+        config.config_path_len = @intCast(full.len);
+
+        assert(config.config_path_len > directory.len);
+        assert(config.config_path_len <= path_len_max);
+    }
+
+    fn load_from_file(config: *Config) Error!void {
+        assert(config.config_path_len > 0);
+        assert(config.config_path_len <= path_len_max);
+
+        var storage: [content_len_max + 1]u8 = undefined;
+
+        const content = config.read(&storage) catch |err| switch (err) {
+            Error.NotFound => {
+                config.is_loaded_from_file = true;
+
+                try config.save();
+
+                return;
+            },
+            else => return err,
+        };
+
+        try config.parse(content);
+
+        config.is_loaded_from_file = true;
+    }
+
+    fn to_zon_config(
+        config: *const Config,
+        capture_text: []u8,
+        render_text: []u8,
+    ) !ZonConfig {
+        const capture_hotkey = try config.capture.hotkey.to_text(capture_text);
+        const render_hotkey = try config.render.hotkey.to_text(render_text);
+
+        return .{
+            .capture = .{
+                .hotkey = capture_hotkey,
+                .name = config.capture.get_name(),
+                .volume = config.capture.volume,
+            },
+            .render = .{
+                .hotkey = render_hotkey,
+                .name = config.render.get_name(),
+                .volume = config.render.volume,
+            },
+        };
+    }
+
+    fn write_config_file(config: *Config, path: []const u8) Error!void {
+        assert(path.len > 0);
+        assert(path.len <= path_len_max);
+
+        var capture_text: [binding.text_bytes_max]u8 = undefined;
+        var render_text: [binding.text_bytes_max]u8 = undefined;
+
+        const zon = config.to_zon_config(&capture_text, &render_text) catch {
+            return Error.WriteFailed;
+        };
+
+        const file = std.Io.Dir.createFileAbsolute(config.io, path, .{}) catch {
+            return Error.WriteFailed;
+        };
+
+        defer file.close(config.io);
+
+        var buffer: [write_buffer_len_max]u8 = undefined;
+        var writer = file.writer(config.io, &buffer);
+
+        std.zon.stringify.serialize(zon, .{}, &writer.interface) catch {
+            return Error.WriteFailed;
+        };
+
+        writer.interface.flush() catch {
+            return Error.WriteFailed;
+        };
     }
 };
 
+fn parse_device(device: ZonDevice, volume_default: f32, hotkey_default: Binding) DeviceConfig {
+    assert(volume_default >= 0.0);
+    assert(volume_default <= 1.0);
+
+    const level = device.volume orelse volume_default;
+
+    var result = DeviceConfig{
+        .hotkey = hotkey_default,
+        .volume = std.math.clamp(level, 0.0, 1.0),
+    };
+
+    assert(result.volume >= 0.0);
+    assert(result.volume <= 1.0);
+
+    if (device.name) |name| {
+        result.set_name(name);
+    }
+
+    if (device.hotkey) |hotkey| {
+        result.hotkey = Binding.parse(hotkey) catch result.hotkey;
+    }
+
+    assert(result.hotkey.key_count > 0);
+
+    return result;
+}
+
 const testing = std.testing;
 
-test "KeySequence.init valid" {
-    const sequence = try KeySequence.init("ABC");
+test "a default configuration carries a usable binding for both directions" {
+    var config = Config.init(testing.allocator, testing.io);
+    defer config.deinit();
 
-    try testing.expectEqual(@as(u32, 3), sequence.len);
-    try testing.expectEqualStrings("ABC", sequence.to_slice());
+    var buffer: [binding.text_bytes_max]u8 = undefined;
+
+    try testing.expectEqualStrings(
+        capture_hotkey_default,
+        try config.capture.get_hotkey().to_text(&buffer),
+    );
+
+    try testing.expectEqualStrings(
+        render_hotkey_default,
+        try config.render.get_hotkey().to_text(&buffer),
+    );
+
+    try testing.expectEqual(capture_volume_default, config.capture.volume);
+    try testing.expectEqual(render_volume_default, config.render.volume);
 }
 
-test "KeySequence.init lowercase converts" {
-    const sequence = try KeySequence.init("abc");
+test "parsing replaces the binding, the name and the volume" {
+    var config = Config.init(testing.allocator, testing.io);
+    defer config.deinit();
 
-    try testing.expectEqualStrings("ABC", sequence.to_slice());
+    const content =
+        \\.{
+        \\    .capture = .{ .hotkey = "Ctrl+Shift+K", .name = "Microphone", .volume = 0.25 },
+        \\    .render = .{ .hotkey = "F9", .name = "Speakers", .volume = 0.75 },
+        \\}
+    ;
+
+    try config.parse(content);
+
+    var buffer: [binding.text_bytes_max]u8 = undefined;
+
+    try testing.expectEqualStrings("Ctrl+Shift+K", try config.capture.hotkey.to_text(&buffer));
+    try testing.expectEqualStrings("Microphone", config.capture.get_name().?);
+    try testing.expectEqual(@as(f32, 0.25), config.capture.volume);
+
+    try testing.expectEqualStrings("F9", try config.render.hotkey.to_text(&buffer));
+    try testing.expectEqualStrings("Speakers", config.render.get_name().?);
+    try testing.expectEqual(@as(f32, 0.75), config.render.volume);
 }
 
-test "KeySequence.init empty fails" {
-    try testing.expectError(ConfigError.InvalidSequence, KeySequence.init(""));
+test "an unusable binding falls back to the default for that direction" {
+    var config = Config.init(testing.allocator, testing.io);
+    defer config.deinit();
+
+    const content =
+        \\.{
+        \\    .capture = .{ .hotkey = "Ctrl+A+B" },
+        \\    .render = .{ .hotkey = "Ctrl+Nonsense" },
+        \\}
+    ;
+
+    try config.parse(content);
+
+    var buffer: [binding.text_bytes_max]u8 = undefined;
+
+    try testing.expectEqualStrings(
+        capture_hotkey_default,
+        try config.capture.hotkey.to_text(&buffer),
+    );
+
+    try testing.expectEqualStrings(
+        render_hotkey_default,
+        try config.render.hotkey.to_text(&buffer),
+    );
 }
 
-test "KeySequence.to_key_name" {
-    var sequence = KeySequence{};
-    sequence.data[0] = keycode.prior;
-    sequence.data[1] = keycode.next;
-    sequence.len = 2;
+test "an omitted volume falls back to the default for that direction" {
+    var config = Config.init(testing.allocator, testing.io);
+    defer config.deinit();
 
-    const name = try sequence.to_key_name(testing.allocator);
-    defer testing.allocator.free(name);
+    const content =
+        \\.{
+        \\    .capture = .{ .name = "Microphone" },
+        \\    .render = .{ .name = "Speakers" },
+        \\}
+    ;
 
-    try testing.expectEqualStrings("PageUp+PageDown", name);
+    try config.parse(content);
+
+    try testing.expectEqual(capture_volume_default, config.capture.volume);
+    try testing.expectEqual(render_volume_default, config.render.volume);
 }
 
-test "KeySequence.from_key_name" {
-    const sequence = try KeySequence.from_key_name("PageUp+PageDown");
+test "an explicit volume is kept even when it matches nothing in particular" {
+    var config = Config.init(testing.allocator, testing.io);
+    defer config.deinit();
 
-    try testing.expectEqual(@as(u32, 2), sequence.len);
-    try testing.expectEqual(keycode.prior, sequence.data[0]);
-    try testing.expectEqual(keycode.next, sequence.data[1]);
+    const content =
+        \\.{
+        \\    .capture = .{ .volume = 0.5 },
+        \\    .render = .{ .volume = 0.5 },
+        \\}
+    ;
+
+    try config.parse(content);
+
+    try testing.expectEqual(@as(f32, 0.5), config.capture.volume);
+    try testing.expectEqual(@as(f32, 0.5), config.render.volume);
 }
 
-test "DeviceConfig.get_name empty" {
-    const device_config = DeviceConfig{};
+test "malformed content is reported rather than applied" {
+    var config = Config.init(testing.allocator, testing.io);
+    defer config.deinit();
 
-    try testing.expect(device_config.get_name() == null);
+    try testing.expectError(Error.ParseError, config.parse("not zon at all"));
 }
 
-test "DeviceConfig.set_name and get_name" {
-    var device_config = DeviceConfig{};
+test "an unset device name reads as absent" {
+    const device = DeviceConfig{};
 
-    device_config.set_name("Microphone");
+    try testing.expect(device.get_name() == null);
+}
 
-    try testing.expectEqualStrings("Microphone", device_config.get_name().?);
+test "a device name longer than the field is truncated rather than overflowing" {
+    var device = DeviceConfig{};
+
+    const name = "n" ** (DeviceConfig.name_len_max + 32);
+
+    device.set_name(name);
+
+    try testing.expectEqual(DeviceConfig.name_len_max, device.name_len);
+    try testing.expectEqual(DeviceConfig.name_len_max, device.get_name().?.len);
+}
+
+test "a configuration without a resolved path reports no path" {
+    var config = Config.init(testing.allocator, testing.io);
+    defer config.deinit();
+
+    try testing.expect(config.get_config_path() == null);
 }

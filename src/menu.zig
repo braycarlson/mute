@@ -1,30 +1,41 @@
+const std = @import("std");
+
 const wisp = @import("wisp");
 
 const constant = @import("constant.zig");
-const Mode = @import("mode.zig").Mode;
+
+const assert = std.debug.assert;
 
 const App = wisp.App;
 
-pub fn MenuManager(comptime mode: Mode) type {
-    _ = mode;
+pub const MenuManager = struct {
+    app: *App,
 
-    return struct {
-        const Self = @This();
+    pub fn init(app: *App) MenuManager {
+        const result = MenuManager{
+            .app = app,
+        };
 
-        app: *App,
+        return result;
+    }
 
-        pub fn init(app: *App) Self {
-            return Self{
-                .app = app,
-            };
-        }
+    pub fn build(manager: *MenuManager) void {
+        const menu = &manager.app.menu;
 
-        pub fn build(self: *Self) void {
-            const menu = self.app.get_menu();
+        menu.clear();
 
-            menu.clear();
+        assert(menu.is_empty());
 
-            menu.add_action(constant.Menu.exit, "Exit") catch {};
-        }
-    };
-}
+        menu.add_action(constant.Menu.exit, "Exit") catch {
+            return;
+        };
+
+        assert(!menu.is_empty());
+    }
+
+    pub fn push(manager: *MenuManager) void {
+        manager.app.menu.build() catch {
+            return;
+        };
+    }
+};
