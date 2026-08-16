@@ -243,7 +243,7 @@ fn create_module(context: Context, backend: Backend, root: []const u8) *std.Buil
 
     for (assets) |asset| {
         module.addAnonymousImport(asset, .{
-            .root_source_file = builder.path(builder.fmt("asset/{s}", .{asset})),
+            .root_source_file = builder.path(builder.fmt("assets/{s}", .{asset})),
         });
     }
 

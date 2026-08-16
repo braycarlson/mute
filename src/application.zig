@@ -177,6 +177,7 @@ pub fn ApplicationType(comptime mode: Mode) type {
             };
 
             self.start_rehook_timer();
+            self.start_recovery_timer();
 
             self.settings.watch(on_config_file_changed, self);
 
@@ -204,6 +205,12 @@ pub fn ApplicationType(comptime mode: Mode) type {
         }
 
         pub fn on_timer_tick(self: *@This(), timer_id: u32) void {
+            if (timer_id == constant.Timer.recovery_id) {
+                self.recover_devices();
+
+                return;
+            }
+
             if (timer_id != constant.Timer.rehook_id) {
                 return;
             }
@@ -265,10 +272,24 @@ pub fn ApplicationType(comptime mode: Mode) type {
         }
 
         fn on_device_changed(self: *@This()) void {
-            self.devices.enumerate();
+            if (!self.devices.enumerate()) {
+                return;
+            }
+
+            assert(self.devices.count() <= mantra.devices_max);
+
+            if (self.devices.prune()) {
+                self.log("Current device disappeared");
+            }
 
             if (self.devices.current == null) {
                 self.devices.current = self.devices.find(self.get_device_config());
+
+                self.devices.update_index();
+                self.adopt_device();
+                self.update_widget();
+
+                return;
             }
 
             self.devices.update_index();
@@ -276,29 +297,9 @@ pub fn ApplicationType(comptime mode: Mode) type {
         }
 
         fn on_device_default_changed(self: *@This()) void {
-            self.devices.restore_default() catch |err| {
-                self.log_error("Unable to restore the default device", err);
-            };
-
-            self.update_widget();
-        }
-
-        fn on_exit(self: *@This()) void {
-            self.log("Exiting");
-            self.app.quit();
-        }
-
-        fn setup_devices(self: *@This()) void {
-            self.devices.enumerate();
-            self.devices.current = self.devices.find(self.get_device_config());
-            self.devices.update_index();
-
-            if (self.devices.current) |*device| {
-                device.set_volume(self.get_device_config().volume);
-
-                self.active = device.is_muted();
-            } else {
-                self.log_device_absent();
+            if (self.get_device_config().get_name() == null) {
+                self.follow_default();
+                self.update_widget();
 
                 return;
             }
@@ -307,8 +308,69 @@ pub fn ApplicationType(comptime mode: Mode) type {
                 self.log_error("Unable to restore the default device", err);
             };
 
-            self.icon.update(self.active);
-            self.log_device_info();
+            self.update_widget();
+        }
+
+        fn follow_default(self: *@This()) void {
+            const wanted = self.devices.find(self.get_device_config()) orelse {
+                return;
+            };
+
+            assert(wanted.id.is_valid());
+
+            if (self.devices.current) |*device| {
+                if (device.id.eql(&wanted.id)) {
+                    return;
+                }
+            }
+
+            _ = self.devices.enumerate();
+
+            self.devices.current = wanted;
+
+            self.devices.update_index();
+            self.adopt_device();
+        }
+
+        fn adopt_device(self: *@This()) void {
+            const config = self.get_device_config();
+            assert(config.volume >= mantra.volume_min);
+            assert(config.volume <= mantra.volume_max);
+
+            if (self.devices.current) |*device| {
+                assert(device.id.is_valid());
+
+                device.set_volume(config.volume);
+
+                self.active = device.is_muted();
+
+                self.icon.update(self.active);
+                self.log_device_info();
+            }
+        }
+
+        fn on_exit(self: *@This()) void {
+            self.log("Exiting");
+            self.app.quit();
+        }
+
+        fn setup_devices(self: *@This()) void {
+            _ = self.devices.enumerate();
+
+            self.devices.current = self.devices.find(self.get_device_config());
+
+            self.devices.update_index();
+            self.adopt_device();
+
+            if (self.devices.current == null) {
+                self.log_device_absent();
+
+                return;
+            }
+
+            self.devices.restore_default() catch |err| {
+                self.log_error("Unable to restore the default device", err);
+            };
         }
 
         fn setup_hotkey(self: *@This()) void {
@@ -358,6 +420,17 @@ pub fn ApplicationType(comptime mode: Mode) type {
             widget.drain();
         }
 
+        fn start_recovery_timer(self: *@This()) void {
+            _ = self.app.timer.start(
+                constant.Timer.recovery_id,
+                constant.Timer.recovery_interval_ms,
+            ) catch {
+                self.log("Unable to start the recovery timer");
+
+                return;
+            };
+        }
+
         fn start_rehook_timer(self: *@This()) void {
             _ = self.app.timer.start(
                 constant.Timer.rehook_id,
@@ -367,6 +440,24 @@ pub fn ApplicationType(comptime mode: Mode) type {
 
                 return;
             };
+        }
+
+        fn recover_devices(self: *@This()) void {
+            if (DeviceEventsType(mode).is_subscribed()) {
+                return;
+            }
+
+            DeviceEventsType(mode).unsubscribe();
+
+            assert(!DeviceEventsType(mode).is_subscribed());
+
+            DeviceEventsType(mode).subscribe() catch {
+                return;
+            };
+
+            self.log("Device notifications restored");
+
+            self.on_device_changed();
         }
 
         fn toggle(self: *@This()) void {

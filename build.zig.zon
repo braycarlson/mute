@@ -4,7 +4,7 @@
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0xccb9735c1c3e2c6f,
     .paths = .{
-        "asset",
+        "assets",
         "deafen.rc",
         "mute.rc",
         "src",

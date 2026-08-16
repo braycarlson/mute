@@ -15,6 +15,8 @@ pub const Message = struct {
 };
 
 pub const Timer = struct {
+    pub const recovery_id: u32 = 2;
+    pub const recovery_interval_ms: u32 = 5 * 1000;
     pub const rehook_id: u32 = 1;
     pub const rehook_interval_ms: u32 = 10 * 60 * 1000;
 };

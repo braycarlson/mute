@@ -47,14 +47,37 @@ pub fn DeviceManagerType(comptime mode: Mode) type {
             return self.list.count;
         }
 
-        pub fn enumerate(self: *@This()) void {
+        pub fn enumerate(self: *@This()) bool {
             mantra.devices.enumerate(mode.to_direction(), &self.list) catch {
                 self.list.clear();
 
-                return;
+                assert(self.list.is_empty());
+
+                return false;
             };
 
             assert(self.list.count <= devices_max);
+
+            return true;
+        }
+
+        pub fn prune(self: *@This()) bool {
+            const device = self.current orelse {
+                return false;
+            };
+
+            assert(device.id.is_valid());
+            assert(self.list.count <= devices_max);
+
+            if (self.list.find(&device.id) != null) {
+                return false;
+            }
+
+            self.current = null;
+
+            assert(self.current == null);
+
+            return true;
         }
 
         pub fn find(self: *@This(), device_config: *DeviceConfig) ?Device {
@@ -269,6 +292,37 @@ test "a current device that is gone leaves the index untouched" {
     manager.update_index();
 
     try testing.expectEqual(@as(u32, 1), manager.index);
+}
+
+test "a current device still in the list survives a prune" {
+    var manager = Capture.init();
+
+    try seed(&manager, &.{ "First", "Second" });
+
+    manager.current = Device.init(try mantra.DeviceId.init(.capture, "Second"));
+
+    try testing.expect(!manager.prune());
+    try testing.expect(manager.current != null);
+}
+
+test "a current device missing from the list is pruned" {
+    var manager = Capture.init();
+
+    try seed(&manager, &.{ "First", "Second" });
+
+    manager.current = Device.init(try mantra.DeviceId.init(.capture, "Absent"));
+
+    try testing.expect(manager.prune());
+    try testing.expect(manager.current == null);
+}
+
+test "pruning without a selection is inert" {
+    var manager = Capture.init();
+
+    try seed(&manager, &.{"First"});
+
+    try testing.expect(!manager.prune());
+    try testing.expect(manager.current == null);
 }
 
 test "deinit clears the list and the selection" {
