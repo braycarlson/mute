@@ -57,7 +57,7 @@ format:
 # Frame 5 of each .ico is the 1024x1024 PNG, which downsamples cleanly to the
 # 32x32 the tray wants. The committed .rgba files are raw 8 bit RGBA, which is
 # the widest raw format ImageMagick 6 writes. src/icon.zig moves the alpha
-# channel to the front at comptime, because that is the ARGB order wisp ships
+# channel to the front at comptime, because that is the ARGB order umbra ships
 # to both backends.
 [unix]
 icons:

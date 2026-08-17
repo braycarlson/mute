@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const wisp = @import("wisp");
+const umbra = @import("umbra");
 
 const binding = @import("binding.zig");
 
@@ -251,7 +251,7 @@ pub const Config = struct {
 
         var directory_buffer: [path_len_max]u8 = undefined;
 
-        const directory = wisp.paths.config_dir(&directory_buffer, app_name) catch {
+        const directory = umbra.paths.config_dir(&directory_buffer, app_name) catch {
             return Error.InvalidPath;
         };
 

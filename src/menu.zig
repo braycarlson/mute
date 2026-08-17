@@ -1,12 +1,12 @@
 const std = @import("std");
 
-const wisp = @import("wisp");
+const umbra = @import("umbra");
 
 const constant = @import("constant.zig");
 
 const assert = std.debug.assert;
 
-const App = wisp.App;
+const App = umbra.App;
 
 pub const MenuManager = struct {
     app: *App,

@@ -3,7 +3,7 @@ const std = @import("std");
 const arc = @import("arc");
 const kalymma = @import("kalymma");
 const mantra = @import("mantra");
-const wisp = @import("wisp");
+const umbra = @import("umbra");
 
 const constant = @import("constant.zig");
 const Config = @import("config.zig").Config;
@@ -22,7 +22,7 @@ const WidgetEvent = @import("widget.zig").WidgetEvent;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-const App = wisp.App;
+const App = umbra.App;
 const Logger = arc.Logger;
 
 pub const Error = error{
@@ -577,13 +577,13 @@ pub fn ApplicationType(comptime mode: Mode) type {
         fn on_config_file_changed(context: ?*anyopaque) void {
             _ = context;
 
-            _ = wisp.loop.post(constant.Message.config_reload);
+            _ = umbra.loop.post(constant.Message.config_reload);
         }
 
         fn on_widget_wake(context: ?*anyopaque) void {
             _ = context;
 
-            _ = wisp.loop.post(constant.Message.widget_input);
+            _ = umbra.loop.post(constant.Message.widget_input);
         }
 
         fn load_configuration(

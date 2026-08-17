@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const mantra = @import("mantra");
-const wisp = @import("wisp");
+const umbra = @import("umbra");
 
 const constant = @import("../constant.zig");
 const Mode = @import("../mode.zig").Mode;
@@ -51,7 +51,7 @@ pub fn DeviceEventsType(comptime mode: Mode) type {
                 return;
             }
 
-            _ = wisp.loop.post(to_message(event));
+            _ = umbra.loop.post(to_message(event));
         }
     };
 }

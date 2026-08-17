@@ -1,12 +1,12 @@
 const std = @import("std");
 
-const wisp = @import("wisp");
+const umbra = @import("umbra");
 
 const assert = std.debug.assert;
 
-const Bus = wisp.Bus;
-const Event = wisp.Event;
-const Response = wisp.Response;
+const Bus = umbra.Bus;
+const Event = umbra.Event;
+const Response = umbra.Response;
 
 pub fn EventHandlerType(comptime Owner: type) type {
     return struct {

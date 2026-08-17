@@ -223,7 +223,7 @@ fn create_module(context: Context, backend: Backend, root: []const u8) *std.Buil
         .backend = backend,
     });
 
-    const wisp = builder.dependency("wisp", .{
+    const umbra = builder.dependency("umbra", .{
         .target = context.target,
         .optimize = context.optimize,
         .backend = backend,
@@ -239,7 +239,7 @@ fn create_module(context: Context, backend: Backend, root: []const u8) *std.Buil
     module.addImport("nimble", nimble.module("nimble"));
     module.addImport("kalymma", kalymma.module("kalymma"));
     module.addImport("mantra", mantra.module("mantra"));
-    module.addImport("wisp", wisp.module("wisp"));
+    module.addImport("umbra", umbra.module("umbra"));
 
     for (assets) |asset| {
         module.addAnonymousImport(asset, .{

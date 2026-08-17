@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const kalymma = @import("kalymma");
-const wisp = @import("wisp");
+const umbra = @import("umbra");
 
 const canvas = @import("ui/canvas.zig");
 const layout = @import("ui/layout.zig");
@@ -159,7 +159,7 @@ pub const Widget = struct {
     }
 
     pub fn post_toggle(widget: *Widget) void {
-        const now: i64 = @intCast(wisp.time.now_ms());
+        const now: i64 = @intCast(umbra.time.now_ms());
 
         const recently_hidden = widget.interaction.focus_loss_hide_time > 0 and
             (now - widget.interaction.focus_loss_hide_time) < focus_loss_threshold_ms;
@@ -430,7 +430,7 @@ pub const Widget = struct {
             return;
         }
 
-        widget.interaction.focus_loss_hide_time = @intCast(wisp.time.now_ms());
+        widget.interaction.focus_loss_hide_time = @intCast(umbra.time.now_ms());
 
         widget.hide();
         widget.fire_event(.closed, 0);
