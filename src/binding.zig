@@ -29,7 +29,7 @@ comptime {
 
 pub const Binding = struct {
     key_count: u32 = 0,
-    keys: [key_max]Keycode = [_]Keycode{.silent} ** key_max,
+    keys: [key_max]Keycode = @splat(.silent),
     modifiers: Set = .{},
 
     pub fn parse(text: []const u8) Error!Binding {
@@ -267,9 +267,9 @@ test "a chord with modifiers is rejected" {
 }
 
 test "an over long binding is rejected" {
-    const text = "A" ** (text_bytes_max + 1);
+    const text: [text_bytes_max + 1]u8 = @splat('A');
 
-    try testing.expectError(Error.TooLong, Binding.parse(text));
+    try testing.expectError(Error.TooLong, Binding.parse(&text));
 }
 
 test "text round trips through the parser" {

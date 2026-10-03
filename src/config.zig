@@ -62,7 +62,7 @@ pub const DeviceConfig = struct {
     pub const name_len_max: u32 = 256;
 
     hotkey: Binding = default_binding(capture_hotkey_default),
-    name: [name_len_max]u8 = [_]u8{0} ** name_len_max,
+    name: [name_len_max]u8 = @splat(0),
     name_len: u32 = 0,
     volume: f32 = capture_volume_default,
 
@@ -104,7 +104,7 @@ pub const Config = struct {
         .hotkey = default_binding(capture_hotkey_default),
         .volume = capture_volume_default,
     },
-    config_path: [path_len_max]u8 = [_]u8{0} ** path_len_max,
+    config_path: [path_len_max]u8 = @splat(0),
     config_path_len: u32 = 0,
     io: std.Io,
     is_loaded_from_file: bool = false,
@@ -156,17 +156,19 @@ pub const Config = struct {
         assert(content.len > 0);
         assert(content.len <= content_len_max);
 
-        const parsed = std.zon.parse.fromSliceAlloc(
-            ZonConfig,
-            config.gpa,
-            content,
-            null,
-            .{},
-        ) catch {
+        var arena_allocator: std.heap.ArenaAllocator = .init(config.gpa);
+        defer arena_allocator.deinit();
+
+        var diagnostics: std.zon.parse.Diagnostics = undefined;
+
+        const parsed = std.zon.parse.fromSlice(ZonConfig, .{
+            .gpa = config.gpa,
+            .arena = arena_allocator.allocator(),
+            .source = content,
+            .diagnostics = &diagnostics,
+        }) catch {
             return Error.ParseError;
         };
-
-        defer std.zon.parse.free(config.gpa, parsed);
 
         config.capture = parse_device(
             parsed.capture,
@@ -257,7 +259,7 @@ pub const Config = struct {
 
         assert(directory.len > 0);
 
-        const full = std.fmt.bufPrint(
+        const full = std.mem.print(
             &config.config_path,
             "{s}{c}{s}",
             .{ directory, std.fs.path.sep, file_name },
@@ -494,9 +496,9 @@ test "an unset device name reads as absent" {
 test "a device name longer than the field is truncated rather than overflowing" {
     var device = DeviceConfig{};
 
-    const name = "n" ** (DeviceConfig.name_len_max + 32);
+    const name: [DeviceConfig.name_len_max + 32]u8 = @splat('n');
 
-    device.set_name(name);
+    device.set_name(&name);
 
     try testing.expectEqual(DeviceConfig.name_len_max, device.name_len);
     try testing.expectEqual(DeviceConfig.name_len_max, device.get_name().?.len);

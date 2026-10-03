@@ -1,7 +1,7 @@
 .{
     .name = .mute,
     .version = "0.0.2",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .fingerprint = 0xccb9735c1c3e2c6f,
     .paths = .{
         "assets",
@@ -13,8 +13,7 @@
     },
     .dependencies = .{
         .arc = .{
-            .url = "https://github.com/braycarlson/arc/archive/b07e5878086eb49623f77820d05e37d2e2a4b01e.tar.gz",
-            .hash = "arc-0.0.1-vu4oTPj9AgDOpqmLlkhxuZ2REopAzqIg5AXIFv2EjsI5",
+            .path = "../arc",
         },
         .kalymma = .{
             .path = "../kalymma",

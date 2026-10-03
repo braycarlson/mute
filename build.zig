@@ -19,20 +19,27 @@ const Steps = struct {
 
 const Context = struct {
     builder: *std.Build,
-    optimize: std.builtin.OptimizeMode,
+    filters: []const []const u8,
+    optimize: std.lang.Optimize,
     steps: Steps,
     target: std.Build.ResolvedTarget,
 };
 
 const Program = struct {
+    icon: []const u8,
     name: []const u8,
     resource: []const u8,
     root: []const u8,
 };
 
 const programs = [_]Program{
-    .{ .name = "mute", .resource = "mute.rc", .root = "src/mute.zig" },
-    .{ .name = "deafen", .resource = "deafen.rc", .root = "src/deafen.zig" },
+    .{ .icon = "assets/unmute.ico", .name = "mute", .resource = "mute.rc", .root = "src/mute.zig" },
+    .{
+        .icon = "assets/undeafen.ico",
+        .name = "deafen",
+        .resource = "deafen.rc",
+        .root = "src/deafen.zig",
+    },
 };
 
 const assets = [_][]const u8{
@@ -49,8 +56,15 @@ pub fn build(builder: *std.Build) void {
     const target = builder.standardTargetOptions(.{});
     const optimize = builder.standardOptimizeOption(.{});
 
+    const filters = builder.option(
+        []const []const u8,
+        "test-filter",
+        "Skip tests that do not match any filter",
+    ) orelse &.{};
+
     const context = Context{
         .builder = builder,
+        .filters = filters,
         .optimize = optimize,
         .steps = .{
             .check = builder.step("check", "Compile every artifact without running it"),
@@ -84,7 +98,7 @@ fn add_executables(context: Context) void {
             .root_module = module,
         });
 
-        add_resource(context, module, exe, program.resource);
+        add_resource(context, module, exe, program);
 
         builder.installArtifact(exe);
 
@@ -109,7 +123,7 @@ fn add_unit_tests(context: Context) void {
 
     const unit = builder.addTest(.{
         .root_module = module,
-        .filters = builder.args orelse &.{},
+        .filters = context.filters,
     });
 
     const run = builder.addRunArtifact(unit);
@@ -129,7 +143,7 @@ fn add_mock_tests(context: Context) void {
 
     const unit = builder.addTest(.{
         .root_module = module,
-        .filters = builder.args orelse &.{},
+        .filters = context.filters,
     });
 
     const run = builder.addRunArtifact(unit);
@@ -161,7 +175,7 @@ fn add_cross_check(context: Context) void {
                 .root_module = module,
             });
 
-            add_resource(scoped, module, exe, program.resource);
+            add_resource(scoped, module, exe, program);
 
             context.steps.ci.dependOn(&exe.step);
         }
@@ -172,7 +186,7 @@ fn add_format(context: Context) void {
     const builder = context.builder;
 
     const format = builder.addFmt(.{
-        .paths = &format_paths,
+        .paths = builder.pathList(&format_paths),
         .check = true,
     });
 
@@ -186,15 +200,37 @@ fn add_resource(
     context: Context,
     module: *std.Build.Module,
     exe: *std.Build.Step.Compile,
-    resource: []const u8,
+    program: Program,
 ) void {
     if (context.target.result.os.tag != .windows) {
         return;
     }
 
-    exe.subsystem = .Windows;
+    exe.subsystem = .windows;
 
-    module.addWin32ResourceFile(.{ .file = context.builder.path(resource) });
+    const builder = context.builder;
+    const name = builder.fmt("zig rc {s}", .{program.resource});
+    const resource = std.Build.Step.Run.create(builder, name);
+
+    resource.addFileArg2(.zig_exe, .{});
+
+    resource.addArgs(&.{
+        "rc",
+        "/:auto-includes",
+        "any",
+        "/:output-format",
+        "coff",
+        "/:target",
+        @tagName(context.target.result.cpu.arch),
+        "--",
+    });
+
+    resource.addFileArg2(builder.path(program.resource), .{});
+    resource.addFileInput(builder.path(program.icon));
+
+    const object = resource.addOutputFileArg2(builder.fmt("{s}.obj", .{program.name}), .{});
+
+    module.addObjectFile(object);
 }
 
 fn create_module(context: Context, backend: Backend, root: []const u8) *std.Build.Module {

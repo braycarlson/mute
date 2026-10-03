@@ -14,7 +14,7 @@
 
 <p align="center">
     <a href="https://github.com/braycarlson/mute/actions/workflows/ci.yml"><img alt="ci" src="https://img.shields.io/github/actions/workflow/status/braycarlson/mute/ci.yml?branch=main&amp;style=flat-square&amp;label=ci"></a>
-    <a href="https://ziglang.org"><img alt="zig" src="https://img.shields.io/badge/zig-0.16.0-orange.svg?style=flat-square"></a>
+    <a href="https://ziglang.org"><img alt="zig" src="https://img.shields.io/badge/zig-0.17.0-orange.svg?style=flat-square"></a>
     <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square"></a>
 </p>
 
@@ -42,24 +42,25 @@ a full-screen application cannot swallow it.
 
 Each tagged release carries a Linux and a Windows build of both binaries.
 
-The build from source looks for [kalymma](https://github.com/braycarlson/kalymma),
+The build from source looks for [arc](https://github.com/braycarlson/arc),
+[kalymma](https://github.com/braycarlson/kalymma),
 [mantra](https://github.com/braycarlson/mantra),
 [nimble](https://github.com/braycarlson/nimble), and
 [umbra](https://github.com/braycarlson/umbra) in the same parent directory, since
-`build.zig.zon` points at them by relative path. It fetches
-[arc](https://github.com/braycarlson/arc) by URL.
+`build.zig.zon` points at them by relative path.
 
 ```
+git clone https://github.com/braycarlson/arc
 git clone https://github.com/braycarlson/kalymma
 git clone https://github.com/braycarlson/mantra
 git clone https://github.com/braycarlson/nimble
 git clone https://github.com/braycarlson/umbra
 git clone https://github.com/braycarlson/mute
 cd mute
-zig build -Doptimize=ReleaseSafe
+zig build --release=safe
 ```
 
-Both binaries land in `zig-out/bin`. mute requires Zig 0.16.0.
+Both binaries land in `zig-out/bin`. mute requires Zig 0.17.0.
 
 ## Usage
 

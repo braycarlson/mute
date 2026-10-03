@@ -89,7 +89,7 @@ fn init_rotating(io: std.Io, comptime mode: Mode) ?arc.RotatingWriter {
 
     var path_buffer: [path_bytes_max]u8 = undefined;
 
-    const path = std.fmt.bufPrint(
+    const path = std.mem.print(
         &path_buffer,
         "{s}{c}{s}",
         .{ directory, std.fs.path.sep, mode.to_log_filename() },

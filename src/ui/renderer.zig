@@ -148,7 +148,7 @@ fn draw_volume_percent(target: *Canvas, bounds: Rect, volume: f32, is_muted: boo
 
     var buffer: [percent_bytes_max]u8 = undefined;
 
-    const percent = std.fmt.bufPrint(&buffer, "{d}%", .{
+    const percent = std.mem.print(&buffer, "{d}%", .{
         @as(u32, @intFromFloat(@round(display * 100.0))),
     }) catch "0%";
 

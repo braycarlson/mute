@@ -120,7 +120,15 @@ pub fn decode(text: []const u8, cursor: *usize) u21 {
         return replacement;
     }
 
-    const value = std.unicode.utf8Decode(text[cursor.*..][0..length]) catch {
+    const sequence = text[cursor.*..][0..length];
+
+    const value = switch (length) {
+        1 => sequence[0],
+        2 => std.unicode.utf8Decode2(sequence[0..2].*),
+        3 => std.unicode.utf8Decode3(sequence[0..3].*),
+        4 => std.unicode.utf8Decode4(sequence[0..4].*),
+        else => unreachable,
+    } catch {
         cursor.* += length;
 
         return replacement;
@@ -230,6 +238,16 @@ test "a multi byte codepoint decodes whole" {
 
     try testing.expectEqual(@as(u21, 0xE9), decode(text, &cursor));
     try testing.expectEqual(@as(u21, 0x20AC), decode(text, &cursor));
+    try testing.expectEqual(text.len, cursor);
+}
+
+test "a four byte codepoint decodes whole and a broken continuation is replaced" {
+    const text = "\u{1F50A}\xC3A";
+
+    var cursor: usize = 0;
+
+    try testing.expectEqual(@as(u21, 0x1F50A), decode(text, &cursor));
+    try testing.expectEqual(replacement, decode(text, &cursor));
     try testing.expectEqual(text.len, cursor);
 }
 

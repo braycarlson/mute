@@ -5,6 +5,10 @@ on:
         branches: [main]
     pull_request:
         branches: [main]
+    workflow_call:
+
+permissions:
+    contents: read
 
 jobs:
     ci:
@@ -13,28 +17,27 @@ jobs:
             matrix:
                 os: [ubuntu-latest, windows-latest]
         runs-on: ${{ matrix.os }}
+        defaults:
+            run:
+                shell: bash
         steps:
             - uses: actions/checkout@v7
               with:
-                  path: mute
-            - uses: actions/checkout@v7
+                  path: ${{ github.event.repository.name }}
+
+            - name: Check out the sibling dependencies
+              run: |
+                  project="${GITHUB_REPOSITORY#*/}"
+                  siblings=$(sed -n 's|^ *\.path = "\.\./\([A-Za-z0-9_-]*\)",$|\1|p' "$project/build.zig.zon")
+
+                  for sibling in $siblings; do
+                      git clone --depth 1 "https://github.com/$GITHUB_REPOSITORY_OWNER/$sibling.git" "$sibling"
+                  done
+
+            - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
               with:
-                  repository: braycarlson/kalymma
-                  path: kalymma
-            - uses: actions/checkout@v7
-              with:
-                  repository: braycarlson/mantra
-                  path: mantra
-            - uses: actions/checkout@v7
-              with:
-                  repository: braycarlson/nimble
-                  path: nimble
-            - uses: actions/checkout@v7
-              with:
-                  repository: braycarlson/umbra
-                  path: umbra
-            - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
-              with:
-                  version: 0.16.0
-            - run: zig build ci --summary all
-              working-directory: mute
+                  version: 0.17.0
+
+            - name: Run the continuous integration pipeline
+              working-directory: ${{ github.event.repository.name }}
+              run: zig build ci --summary all

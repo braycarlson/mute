@@ -34,15 +34,15 @@ test:
 
 # Run the colocated unit tests and the tidy law, optionally filtered: just unit tidy
 unit filter="":
-    zig build test:unit --summary all -- {{filter}}
+    zig build test:unit --summary all {{ if filter == "" { "" } else { "-Dtest-filter=" + filter } }}
 
 # Drive the application against the mock backends, optionally filtered
 mock filter="":
-    zig build test:mock --summary all -- {{filter}}
+    zig build test:mock --summary all {{ if filter == "" { "" } else { "-Dtest-filter=" + filter } }}
 
 # Run the tidy check on its own
 tidy:
-    zig build test:unit -- tidy
+    zig build test:unit -Dtest-filter=tidy
 
 # Check that every source file is formatted
 fmt:
@@ -61,15 +61,15 @@ format:
 # to both backends.
 [unix]
 icons:
-    convert asset/mute.ico[5] -background none -alpha on -resize 32x32 -depth 8 rgba:asset/mute.rgba
-    convert asset/unmute.ico[5] -background none -alpha on -resize 32x32 -depth 8 rgba:asset/unmute.rgba
-    convert asset/deafen.ico[5] -background none -alpha on -resize 32x32 -depth 8 rgba:asset/deafen.rgba
-    convert asset/undeafen.ico[5] -background none -alpha on -resize 32x32 -depth 8 rgba:asset/undeafen.rgba
+    convert assets/mute.ico[5] -background none -alpha on -resize 32x32 -depth 8 rgba:assets/mute.rgba
+    convert assets/unmute.ico[5] -background none -alpha on -resize 32x32 -depth 8 rgba:assets/unmute.rgba
+    convert assets/deafen.ico[5] -background none -alpha on -resize 32x32 -depth 8 rgba:assets/deafen.rgba
+    convert assets/undeafen.ico[5] -background none -alpha on -resize 32x32 -depth 8 rgba:assets/undeafen.rgba
 
 # Regenerate the glyph atlases and the metrics table
 #
 # Renders DejaVu Sans at the two sizes the overlay uses into raw 8 bit coverage
-# masks under asset/, and regenerates src/ui/atlas.zig beside them. Needs python3
+# masks under assets/, and regenerates src/ui/atlas.zig beside them. Needs python3
 # with Pillow and the fonts-dejavu-core package, or DEJAVU_FONTS pointing at the
 # directory holding it.
 [unix]
@@ -83,11 +83,11 @@ atlas:
 
 # Build with release safety checks
 release:
-    zig build -Doptimize=ReleaseSafe
+    zig build --release=safe
 
 # Build the smallest release binary
 release-small:
-    zig build -Doptimize=ReleaseSmall
+    zig build --release=small
 
 # Clean build artifacts
 [unix]

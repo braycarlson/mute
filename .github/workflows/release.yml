@@ -1,0 +1,138 @@
+name: release
+
+on:
+    push:
+        tags:
+            - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+    contents: read
+
+concurrency:
+    group: release-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    ci:
+        uses: ./.github/workflows/ci.yml
+
+    build:
+        needs: ci
+        runs-on: ubuntu-latest
+        defaults:
+            run:
+                shell: bash
+        env:
+            PROJECT: ${{ github.event.repository.name }}
+            VERSION: ${{ github.ref_name }}
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  path: ${{ github.event.repository.name }}
+
+            - name: Check out the sibling dependencies
+              run: |
+                  siblings=$(sed -n 's|^ *\.path = "\.\./\([A-Za-z0-9_-]*\)",$|\1|p' "$PROJECT/build.zig.zon" | tr '\n' ' ')
+
+                  for sibling in $siblings; do
+                      git clone --depth 1 "https://github.com/$GITHUB_REPOSITORY_OWNER/$sibling.git" "$sibling"
+                  done
+
+                  echo "SIBLINGS=$siblings" >> "$GITHUB_ENV"
+
+            - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+              with:
+                  version: 0.17.0
+
+            - name: Check that the tag matches the package version
+              run: |
+                  version=$(sed -n 's|^ *\.version = "\(.*\)",$|\1|p' "$PROJECT/build.zig.zon")
+
+                  if [ "$version" != "$VERSION" ]; then
+                      echo "::error::The tag $VERSION does not match the build.zig.zon version $version"
+                      exit 1
+                  fi
+
+            - name: Build the archives
+              run: |
+                  mkdir dist
+
+                  for target in x86_64-linux-gnu x86_64-windows-gnu; do
+                      platform="${target%-*}"
+                      prefix="$RUNNER_TEMP/$target"
+
+                      (cd "$PROJECT" && zig build -Dtarget="$target" --release=safe --prefix "$prefix")
+
+                      for executable in "$prefix"/bin/*; do
+                          if [[ "$executable" == *.pdb ]]; then
+                              continue
+                          fi
+
+                          program=$(basename "$executable" .exe)
+                          stem="$program-$VERSION-$platform"
+                          stage="$RUNNER_TEMP/stage/$stem"
+                          symbols="${executable%.exe}.pdb"
+
+                          mkdir -p "$stage"
+                          cp "$executable" "$PROJECT/LICENSE" "$stage/"
+
+                          if [ -f "$symbols" ]; then
+                              cp "$symbols" "$stage/"
+                          fi
+
+                          if [ "$platform" = x86_64-windows ]; then
+                              (cd "$RUNNER_TEMP/stage" && zip -qr "$GITHUB_WORKSPACE/dist/$stem.zip" "$stem")
+                          else
+                              tar -czf "dist/$stem.tar.gz" -C "$RUNNER_TEMP/stage" "$stem"
+                          fi
+                      done
+                  done
+
+            - name: Record the source revisions
+              run: |
+                  zig_version=$(cd "$PROJECT" && zig version)
+
+                  echo "Built with Zig $zig_version from:" > notes.md
+                  echo >> notes.md
+
+                  for repository in "$PROJECT" $SIBLINGS; do
+                      revision=$(git -C "$repository" rev-parse HEAD)
+
+                      echo "- $GITHUB_REPOSITORY_OWNER/$repository@$revision" >> notes.md
+                  done
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: release
+                  path: |
+                      dist/
+                      notes.md
+                  if-no-files-found: error
+                  retention-days: 1
+
+    publish:
+        needs: build
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        defaults:
+            run:
+                shell: bash
+        env:
+            GH_REPO: ${{ github.repository }}
+            GH_TOKEN: ${{ github.token }}
+            VERSION: ${{ github.ref_name }}
+        steps:
+            - uses: actions/download-artifact@v8
+              with:
+                  name: release
+
+            - name: Create the release
+              run: |
+                  (cd dist && sha256sum -- * > SHA256SUMS)
+
+                  gh release create "$VERSION" dist/* \
+                      --title "$VERSION" \
+                      --notes-file notes.md \
+                      --generate-notes \
+                      --verify-tag

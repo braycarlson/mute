@@ -473,8 +473,9 @@ const testing = std.testing;
 
 test "a device name longer than the field is truncated rather than overflowing" {
     var device = DeviceState{};
+    const name: [device_name_len_max + 32]u8 = @splat('n');
 
-    device.set_name("n" ** (device_name_len_max + 32));
+    device.set_name(&name);
 
     try testing.expectEqual(device_name_len_max, device.name_len);
     try testing.expectEqual(@as(usize, device_name_len_max), device.get_name_slice().len);

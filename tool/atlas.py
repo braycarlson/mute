@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bake a DejaVu Sans glyph atlas into raw coverage masks plus a Zig metrics table.
 
-Emits one 8 bit alpha mask per face under asset/ and src/ui/atlas.zig, which the
+Emits one 8 bit alpha mask per face under assets/ and src/ui/atlas.zig, which the
 software rasterizer indexes when it blits text. Advances are stored in 1/64 of a
 pixel so draw_run can carry the rounding error across a run instead of dropping
 it at every glyph. Run through `just atlas`. Needs python3 with Pillow and the
@@ -213,7 +213,7 @@ def main():
         height = pack(glyphs)
         image = compose(glyphs, height)
 
-        target = os.path.join("asset", "atlas_%s.a8" % name)
+        target = os.path.join("assets", "atlas_%s.a8" % name)
 
         with open(target, "wb") as handle:
             handle.write(image.tobytes())
