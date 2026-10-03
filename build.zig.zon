@@ -1,6 +1,6 @@
 .{
     .name = .mute,
-    .version = "0.0.2",
+    .version = "0.0.3",
     .minimum_zig_version = "0.17.0",
     .fingerprint = 0xccb9735c1c3e2c6f,
     .paths = .{
