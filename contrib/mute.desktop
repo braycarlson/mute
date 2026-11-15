@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Mute
+Comment=Microphone mute toggle
+Keywords=microphone;audio;
+Exec=systemctl --user start mute.service
+Icon=mute
+Terminal=false

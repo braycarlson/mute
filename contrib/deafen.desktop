@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Deafen
+Comment=Audio deafen toggle
+Keywords=speaker;playback;audio;
+Exec=systemctl --user start deafen.service
+Icon=deafen
+Terminal=false
